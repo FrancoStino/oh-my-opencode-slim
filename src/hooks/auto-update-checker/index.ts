@@ -170,6 +170,7 @@ async function runBackgroundUpdateCheck(
       '[auto-update-checker] Already on latest version for channel:',
       channel,
     );
+    showStagedSkillsReviewToast(ctx, stagedSkillsThisUpdate);
     return;
   }
 
@@ -198,6 +199,7 @@ async function runBackgroundUpdateCheck(
       8000,
     );
     log('[auto-update-checker] Auto-update disabled, notification only');
+    showStagedSkillsReviewToast(ctx, stagedSkillsThisUpdate);
     return;
   }
 
@@ -224,11 +226,11 @@ async function runBackgroundUpdateCheck(
     try {
       const syncResult = syncBundledSkillsFromPackage(packageRoot);
       installedSkills = syncResult.installed;
-      for (const skill of [...syncResult.installed, ...syncResult.adopted]) {
-        stagedSkillsThisUpdate.delete(skill);
-      }
       for (const skill of syncResult.stagedThisSync) {
         stagedSkillsThisUpdate.add(skill);
+      }
+      for (const skill of [...syncResult.installed, ...syncResult.adopted]) {
+        stagedSkillsThisUpdate.delete(skill);
       }
       if (syncResult.failed.length > 0) {
         log(
@@ -319,6 +321,21 @@ function showMajorUpgradeToast(ctx: PluginInput, version: string): void {
     'It requires OpenCode background subagents.\nRun: bunx oh-my-opencode-slim@latest install',
     'info',
     12_000,
+  );
+}
+
+function showStagedSkillsReviewToast(
+  ctx: PluginInput,
+  stagedSkills: ReadonlySet<string>,
+): void {
+  if (stagedSkills.size === 0) return;
+
+  showToast(
+    ctx,
+    'Skill updates need review',
+    `Manual review required: ${[...stagedSkills].join(', ')}`,
+    'info',
+    8000,
   );
 }
 
