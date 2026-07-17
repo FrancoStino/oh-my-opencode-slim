@@ -120,6 +120,7 @@ async function runBackgroundUpdateCheck(
   const pluginInfo = findPluginEntry(ctx.directory);
   if (!pluginInfo) {
     log('[auto-update-checker] Plugin not found in config');
+    showStagedSkillsReviewToast(ctx, stagedSkillsThisUpdate);
     return;
   }
 
@@ -127,6 +128,7 @@ async function runBackgroundUpdateCheck(
   const currentVersion = cachedVersion ?? pluginInfo.pinnedVersion;
   if (!currentVersion) {
     log('[auto-update-checker] No version found (cached or pinned)');
+    showStagedSkillsReviewToast(ctx, stagedSkillsThisUpdate);
     return;
   }
 
@@ -145,6 +147,7 @@ async function runBackgroundUpdateCheck(
         8000,
       );
     }
+    showStagedSkillsReviewToast(ctx, stagedSkillsThisUpdate);
     return;
   }
 
@@ -153,6 +156,7 @@ async function runBackgroundUpdateCheck(
     log(
       `[auto-update-checker] Major update available; skipping auto-update: ${latestInfo.latestMajorVersion}`,
     );
+    showStagedSkillsReviewToast(ctx, stagedSkillsThisUpdate);
     return;
   }
 
@@ -162,6 +166,7 @@ async function runBackgroundUpdateCheck(
       '[auto-update-checker] Failed to fetch latest version for channel:',
       channel,
     );
+    showStagedSkillsReviewToast(ctx, stagedSkillsThisUpdate);
     return;
   }
 
@@ -187,6 +192,7 @@ async function runBackgroundUpdateCheck(
       8000,
     );
     log(`[auto-update-checker] Version is pinned; skipping auto-update.`);
+    showStagedSkillsReviewToast(ctx, stagedSkillsThisUpdate);
     return;
   }
 
@@ -213,6 +219,7 @@ async function runBackgroundUpdateCheck(
       8000,
     );
     log('[auto-update-checker] Failed to prepare install root for auto-update');
+    showStagedSkillsReviewToast(ctx, stagedSkillsThisUpdate);
     return;
   }
 
@@ -311,6 +318,7 @@ async function runBackgroundUpdateCheck(
       8000,
     );
     log('[auto-update-checker] bun install failed; update not installed');
+    showStagedSkillsReviewToast(ctx, stagedSkillsThisUpdate);
   }
 }
 

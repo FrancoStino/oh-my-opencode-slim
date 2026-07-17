@@ -295,6 +295,49 @@ describe('auto-update-checker/index', () => {
     });
   });
 
+  test('shows a manual-review toast when a version-pinned update is staged at startup', async () => {
+    checkerMocks.getCurrentRuntimePackageJsonPath.mockImplementation(
+      () => '/tmp/opencode/package.json',
+    );
+    checkerMocks.findPluginEntry.mockImplementation(() => ({
+      pinnedVersion: '0.9.1',
+      isPinned: true,
+    }));
+    checkerMocks.getLatestCompatibleVersion.mockImplementation(async () => ({
+      latestVersion: '0.9.11',
+      latestMajorVersion: null,
+      blockedByMajor: false,
+    }));
+    skillSyncMocks.syncBundledSkillsFromPackage.mockImplementation(() => ({
+      installed: [],
+      skippedExisting: [],
+      failed: [],
+      staged: ['reflect'],
+      adopted: [],
+      customized: ['reflect'],
+      stagedThisSync: ['reflect'],
+    }));
+
+    const { createAutoUpdateCheckerHook } = await import(
+      `./index?test=${importCounter++}`
+    );
+    const { ctx, showToast } = createCtx();
+
+    createAutoUpdateCheckerHook(ctx as never).event({
+      event: { type: 'session.created', properties: {} },
+    });
+    await waitForCalls(showToast, 2);
+
+    expect(showToast).toHaveBeenCalledWith({
+      body: {
+        title: 'Skill updates need review',
+        message: 'Manual review required: reflect',
+        variant: 'info',
+        duration: 8000,
+      },
+    });
+  });
+
   test('includes newly installed bundled skills in success toast', async () => {
     checkerMocks.findPluginEntry.mockImplementation(() => ({
       pinnedVersion: null,
@@ -741,6 +784,58 @@ describe('auto-update-checker/index', () => {
         message:
           'v0.9.11 available, but auto-update failed to install it. Check logs or retry manually.',
         variant: 'error',
+        duration: 8000,
+      },
+    });
+  });
+
+  test('shows a manual-review toast when installation fails after startup staging', async () => {
+    checkerMocks.getCurrentRuntimePackageJsonPath.mockImplementation(
+      () => '/tmp/opencode/package.json',
+    );
+    checkerMocks.findPluginEntry.mockImplementation(() => ({
+      pinnedVersion: null,
+      isPinned: false,
+    }));
+    checkerMocks.getCachedVersion.mockImplementation(() => '0.9.1');
+    checkerMocks.getLatestCompatibleVersion.mockImplementation(async () => ({
+      latestVersion: '0.9.11',
+      latestMajorVersion: null,
+      blockedByMajor: false,
+    }));
+    skillSyncMocks.syncBundledSkillsFromPackage.mockImplementation(() => ({
+      installed: [],
+      skippedExisting: [],
+      failed: [],
+      staged: ['reflect'],
+      adopted: [],
+      customized: ['reflect'],
+      stagedThisSync: ['reflect'],
+    }));
+    crossSpawnMock.mockImplementation(() => ({
+      exited: Promise.resolve(1),
+      exitCode: 1,
+      kill: mock(() => true),
+      stdout: () => Promise.resolve(''),
+      stderr: () => Promise.resolve(''),
+      proc: {} as never,
+    }));
+
+    const { createAutoUpdateCheckerHook } = await import(
+      `./index?test=${importCounter++}`
+    );
+    const { ctx, showToast } = createCtx();
+
+    createAutoUpdateCheckerHook(ctx as never).event({
+      event: { type: 'session.created', properties: {} },
+    });
+    await waitForCalls(showToast, 2);
+
+    expect(showToast).toHaveBeenCalledWith({
+      body: {
+        title: 'Skill updates need review',
+        message: 'Manual review required: reflect',
+        variant: 'info',
         duration: 8000,
       },
     });
