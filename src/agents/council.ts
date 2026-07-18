@@ -79,7 +79,4 @@ export function createCouncilAgent(
       },
     },
   };
-
-  // Council's model comes from config override or is resolved at
-  // runtime; only set if a non-empty string is provided.
 }

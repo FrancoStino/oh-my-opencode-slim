@@ -88,7 +88,7 @@ Preset resolution flow:
 |--------|-----------------|-------------|
 | `src/index.ts` | `loadPluginConfig()` | Main plugin entry point loads merged config |
 | `src/agents/` | Agent configuration | Agents use config for model selection and permissions |
-| `src/council/` | Council configuration | Council agent uses CouncilConfig for multi-LLM orchestration |
+| `src/agents/council.ts` | Council agent configuration | Council agent uses CouncilConfig for multi-LLM orchestration |
 | `src/multiplexer/` | Multiplexer configuration | Uses multiplexer config for pane layout and type |
 | `src/cli/` | Config file discovery | CLI tools use config paths for user/project config lookup |
 

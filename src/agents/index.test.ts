@@ -362,7 +362,7 @@ describe('tool permissions', () => {
     ).toBe('deny');
   });
 
-  test('council agent is fully read-only (synthesis-only, no council_session)', () => {
+  test('council agent has synthesis-only read-only permissions', () => {
     const agents = createAgents({
       council: councilConfig(),
     });
