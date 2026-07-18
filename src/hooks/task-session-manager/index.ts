@@ -52,6 +52,7 @@ const IDLE_RECONCILE_DELAY_MS = 2_000;
 
 const CONTINUATION_NUDGE =
   'Continue coordinating the remaining incomplete todos. Do not finalize while work remains.';
+const IDLESS_INPUT_WAIT = Symbol('idless-input-wait');
 const INPUT_WAIT_ASK_EVENTS = {
   'permission.asked': 'permission',
   'question.asked': 'question',
@@ -154,7 +155,7 @@ export function createTaskSessionManagerHook(
   const continuationSessionTokens = new Map<string, symbol>();
   const activeContinuationEvaluations = new Map<string, Set<symbol>>();
   const continuationConsumed = new Set<string>();
-  const inputWaitsByParent = new Map<string, Set<string>>();
+  const inputWaitsByParent = new Map<string, Set<string | symbol>>();
   const idleReconcileDelayMs =
     options.idleReconcileDelayMs ?? IDLE_RECONCILE_DELAY_MS;
 
@@ -228,9 +229,15 @@ export function createTaskSessionManagerHook(
 
     if (isInputWaitAskEvent(event.type)) {
       const requestID = event.properties?.id;
-      if (!requestID) return;
+      const waits =
+        inputWaitsByParent.get(sessionID) ?? new Set<string | symbol>();
+      if (!requestID) {
+        waits.add(IDLESS_INPUT_WAIT);
+        inputWaitsByParent.set(sessionID, waits);
+        invalidateContinuation(sessionID);
+        return;
+      }
       const key = inputWaitKey(INPUT_WAIT_ASK_EVENTS[event.type], requestID);
-      const waits = inputWaitsByParent.get(sessionID) ?? new Set<string>();
       waits.add(key);
       inputWaitsByParent.set(sessionID, waits);
       invalidateContinuation(sessionID);

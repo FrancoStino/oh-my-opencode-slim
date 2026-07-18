@@ -2794,6 +2794,48 @@ describe('task-session-manager hook', () => {
     expect(promptAsync).not.toHaveBeenCalled();
   });
 
+  test('fails closed when an id-less ask races a scheduled continuation', async () => {
+    const todo = mock(async () => ({ data: [{ status: 'pending' }] }));
+    const promptAsync = mock(async () => ({}));
+    const { hook } = createHook({
+      idleReconcileDelayMs: 0,
+      sessionClient: {
+        todo,
+        children: mock(async () => ({ data: [] })),
+        status: mock(async () => ({ data: {} })),
+        promptAsync,
+      },
+    });
+
+    await hook.event({
+      event: { type: 'session.idle', properties: { sessionID: 'parent-1' } },
+    });
+    await hook.event({
+      event: {
+        type: 'question.asked',
+        properties: { sessionID: 'parent-1' },
+      },
+    });
+    await flushContinuation();
+
+    expect(todo).not.toHaveBeenCalled();
+    expect(promptAsync).not.toHaveBeenCalled();
+
+    await hook.event({
+      event: {
+        type: 'question.replied',
+        properties: { sessionID: 'parent-1', requestID: 'question-1' },
+      },
+    });
+    await hook.event({
+      event: { type: 'session.idle', properties: { sessionID: 'parent-1' } },
+    });
+    await flushContinuation();
+
+    expect(todo).not.toHaveBeenCalled();
+    expect(promptAsync).not.toHaveBeenCalled();
+  });
+
   test('clears only the resolved input wait and resumes on a later idle', async () => {
     const promptAsync = mock(async () => ({}));
     const { hook } = createHook({
