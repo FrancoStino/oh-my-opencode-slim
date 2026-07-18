@@ -26,6 +26,7 @@ import { applyOrchestratorModelConfig } from './config/strip-orchestrator-model'
 import {
   createApplyPatchHook,
   createAutoUpdateCheckerHook,
+  createCacheMonitorHook,
   createChatHeadersHook,
   createDeepworkCommandHook,
   createDelegateTaskRetryHook,
@@ -128,6 +129,10 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     log('[plugin] disabled by OH_MY_OPENCODE_SLIM_DISABLE');
     return {};
   }
+
+  // Observation-only prompt-cache watchdog; safe to create before config
+  // loads and must see every event, so it sits outside the try block.
+  const cacheMonitor = createCacheMonitorHook();
 
   // Declare variables that must survive the try/catch for the return
   // closure. These are set inside the try block.
@@ -296,8 +301,8 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     chatHeadersHook = createChatHeadersHook(ctx);
 
     // Initialize foreground fallback manager for runtime model switching.
-    // Enabled by default even without fallback chains — the manager can still
-    // abort rate-limited sessions after maxRetries to prevent infinite freezes.
+    // Agents without a chain (e.g. councillor, owned by CouncilManager) are
+    // left alone — FG only aborts/re-prompts when it has a model to switch to.
     foregroundFallback = new ForegroundFallbackManager(
       ctx.client,
       runtimeChains,
@@ -857,6 +862,8 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     },
 
     event: async (input) => {
+      await cacheMonitor.event(input);
+
       const event = input.event as {
         type: string;
         properties?: {
@@ -1198,6 +1205,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
         input as never,
         typedOutput as never,
       );
+      await taskSessionManagerHook.injectBackgroundJobBoard(input, typedOutput);
     },
 
     'tool.execute.after': async (input, output) => {
