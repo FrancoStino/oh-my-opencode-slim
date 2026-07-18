@@ -323,7 +323,7 @@ responded (or failed), the council agent synthesizes their results.
 Council responses include:
 
 1. **Council Response** — the synthesized final answer.
-2. **Councillor Details** — each responding councillor's individual response,
+2. **Per-Councillor Details** — each responding councillor's individual response,
    using the councillor names from the configured preset.
 3. **Council Summary** — agreement, disagreement resolution, remaining
    uncertainty, and a consensus confidence rating of `unanimous`, `majority`,

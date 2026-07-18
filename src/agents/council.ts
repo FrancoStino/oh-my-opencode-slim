@@ -5,6 +5,8 @@ import { createReadOnlyAgentPermission } from './permissions';
 // NOTE: Councillor system prompts live in the councillor agent factory.
 // The council agent synthesizes councillor responses passed by the orchestrator.
 
+const COUNCIL_SYNTHESIS_REINFORCEMENT = `\n\n---\n\nYou MUST follow the Synthesis Process steps before producing output: review each councillor response individually by name, then produce the required output with a synthesized Council Response, a Per-Councillor Details section using each councillor's exact name, and a Council Summary with Consensus Level (unanimous|majority|split), Agreed Points, Disagreements + resolution, Remaining Uncertainty, and Recommended Action.`;
+
 const COUNCIL_AGENT_PROMPT = `You are the Council agent - a \
 synthesizer for multi-model consensus.
 
@@ -47,6 +49,7 @@ For each councillor, show:
 - **Consensus Level**: unanimous | majority | split (pick one)
 - **Agreed Points**: what all councillors agreed on
 - **Disagreements**: where councillors differed and your resolution
+- **Remaining Uncertainty**: any caveats, untested assumptions, or open questions the council could not fully resolve
 - **Recommended Action**: what to do next`;
 
 /**
@@ -59,11 +62,9 @@ export function createCouncilAgent(
   customPrompt?: string,
   customAppendPrompt?: string,
 ): AgentDefinition {
-  const prompt = resolvePrompt(
-    COUNCIL_AGENT_PROMPT,
-    customPrompt,
-    customAppendPrompt,
-  );
+  const prompt =
+    resolvePrompt(COUNCIL_AGENT_PROMPT, customPrompt, customAppendPrompt) +
+    COUNCIL_SYNTHESIS_REINFORCEMENT;
 
   return {
     name: 'council',
