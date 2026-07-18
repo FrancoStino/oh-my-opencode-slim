@@ -69,10 +69,7 @@ describe('buildCouncillorAgents', () => {
             model: 'openai/gpt-5.6',
             variant: undefined,
             prompt: undefined,
-            models: [
-              { id: 'openai/gpt-5.6' },
-              { id: 'anthropic/claude-opus' },
-            ],
+            models: [{ id: 'openai/gpt-5.6' }, { id: 'anthropic/claude-opus' }],
           },
         },
       },
@@ -110,7 +107,7 @@ describe('buildCouncillorAgents', () => {
       },
     });
 
-    const agents = buildCouncillorAgents(config, new Set(['alpha']));
+    const agents = buildCouncillorAgents(config, new Set(['councillor-alpha']));
     expect(agents).toHaveLength(1);
     expect(agents[0].name).toBe('councillor-beta');
   });

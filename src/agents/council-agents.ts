@@ -25,9 +25,9 @@ export function buildCouncillorAgents(
   const agents: AgentDefinition[] = [];
   for (const [name, cfg] of Object.entries(preset)) {
     if (name === 'master') continue;
-    if (disabled.has(name)) continue;
 
     const agentName = `${COUNCILLOR_AGENT_PREFIX}${name}`;
+    if (disabled.has(agentName)) continue;
     const base = createCouncillorAgent(cfg.model, undefined, cfg.prompt);
 
     // If a fallback chain is configured, attach _modelArray for runtime
