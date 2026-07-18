@@ -4,7 +4,7 @@ import { createSynthesisOnlyPermission } from './permissions';
 // NOTE: Councillor system prompts live in the councillor agent factory.
 // The council agent synthesizes councillor responses passed by the orchestrator.
 
-const COUNCIL_SYNTHESIS_REINFORCEMENT = `\n\n---\n\nYou MUST follow the Synthesis Process steps before producing output: review each councillor response individually by name, then produce the required output with a synthesized Council Response, a Per-Councillor Details section using each councillor's exact name, and a Council Summary with Consensus Level (unanimous|majority|split), Agreed Points, Disagreements + resolution, Remaining Uncertainty, and Recommended Action.`;
+const COUNCIL_SYNTHESIS_REINFORCEMENT = `\n\n---\n\nYou MUST follow the Synthesis Process steps before producing output: review each councillor response individually by name, then produce the required output with a synthesized Council Response, a Per-Councillor Details section using each councillor's exact seat name (e.g. "alpha", not the model label), and a Council Summary with Consensus Level (unanimous|majority|split), Agreed Points, Disagreements + resolution, Remaining Uncertainty, and Recommended Action.`;
 
 const COUNCIL_AGENT_PROMPT = `You are the Council agent - a \
 synthesizer for multi-model consensus.
@@ -25,7 +25,9 @@ key insight and unique contribution by name
 **Behavior**:
 - Credit specific insights from individual councillors using their names
 - If councillors disagree, explain why you chose one approach over another
+- Be transparent about trade-offs when different approaches have valid pros/cons
 - Do not omit per-councillor details from the final response
+- Do not collapse the output into only a final summary - keep the per-councillor and summary sections distinct
 - Don't just average responses - choose the best approach and improve upon it
 
 **Required Output Format**:
@@ -38,9 +40,10 @@ recommendation or answer. Include relevant code examples and concrete details.
 
 ## Per-Councillor Details
 For each councillor, show:
-- Their key insight, idea, or recommendation (using their exact name)
+- Their key insight, idea, or recommendation (using their exact name - the seat name, e.g. "alpha", not the model label)
 - Their confidence level (if expressed)
 - Notable points of agreement/disagreement with other councillors
+- If a councillor failed or timed out, note that status briefly instead of omitting it
 
 ## Council Summary
 - **Consensus Level**: unanimous | majority | split (pick one)
