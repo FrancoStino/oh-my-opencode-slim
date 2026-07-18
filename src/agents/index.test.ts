@@ -362,23 +362,27 @@ describe('tool permissions', () => {
     ).toBe('deny');
   });
 
-  test('council agent has synthesis-only read-only permissions', () => {
+  test('council agent has synthesis-only (deny-all) permissions', () => {
     const agents = createAgents({
       council: councilConfig(),
     });
     const council = agents.find((a) => a.name === 'council');
     const permission = council?.config.permission as Record<string, string>;
     expect(permission['*']).toBe('deny');
-    expect(permission.read).toBe('allow');
-    expect(permission.glob).toBe('allow');
-    expect(permission.grep).toBe('allow');
-    expect(permission.ast_grep_search).toBe('allow');
+    expect(permission.read).toBe('deny');
+    expect(permission.glob).toBe('deny');
+    expect(permission.grep).toBe('deny');
+    expect(permission.ast_grep_search).toBe('deny');
+    expect(permission.codesearch).toBe('deny');
+    expect(permission.lsp).toBe('deny');
+    expect(permission.list).toBe('deny');
     expect(permission.bash).toBe('deny');
     expect(permission.edit).toBe('deny');
     expect(permission.write).toBe('deny');
     expect(permission.apply_patch).toBe('deny');
     expect(permission.ast_grep_replace).toBe('deny');
     expect(permission.task).toBe('deny');
+    expect(permission.question).toBe('deny');
   });
 
   test('councillor remains read-only after default permissions are applied', () => {

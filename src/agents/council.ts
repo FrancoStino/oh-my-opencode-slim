@@ -1,6 +1,5 @@
-import { READONLY_FILE_OPERATIONS_RULES } from '../config';
 import { type AgentDefinition, resolvePrompt } from './orchestrator';
-import { createReadOnlyAgentPermission } from './permissions';
+import { createSynthesisOnlyPermission } from './permissions';
 
 // NOTE: Councillor system prompts live in the councillor agent factory.
 // The council agent synthesizes councillor responses passed by the orchestrator.
@@ -12,7 +11,7 @@ synthesizer for multi-model consensus.
 
 **Role**: You receive raw responses from multiple councillors (different models) and synthesize them into a structured council report. You do NOT dispatch councillors yourself - the orchestrator handles dispatch and provides the councillor results.
 
-**Tools**: You have read-only codebase inspection tools. You do not have write, edit, shell, or task tools.
+**Tools**: You have NO tools. You synthesize purely from the councillor responses provided in your context. Do not read, glob, grep, or run shell commands.
 
 **Synthesis Process** (MANDATORY - follow in order):
 1. Read the original user prompt (provided in the context)
@@ -28,8 +27,6 @@ key insight and unique contribution by name
 - If councillors disagree, explain why you chose one approach over another
 - Do not omit per-councillor details from the final response
 - Don't just average responses - choose the best approach and improve upon it
-
-${READONLY_FILE_OPERATIONS_RULES}
 
 **Required Output Format**:
 Always include these sections in your final response:
@@ -76,7 +73,7 @@ export function createCouncilAgent(
       temperature: 0.1,
       prompt,
       permission: {
-        ...createReadOnlyAgentPermission(),
+        ...createSynthesisOnlyPermission(),
       },
     },
   };
