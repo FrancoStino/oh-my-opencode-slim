@@ -268,17 +268,10 @@ Include:
 
 ### Task-fit rejections
 
-Specialists receive this instruction:
-
-```text
-If an assignment is outside your role, permissions, or available context, reject it rather than partially attempting it. Respond exactly:
-<task_rejection>
-<reason>brief explanation for the orchestrator</reason>
-</task_rejection>
-```
-
-The orchestrator inspects only the reason to reroute or clarify the task and
-must not retry the unchanged task with the same agent.
+If a task is outside a specialist's role, permissions, or available context, it
+must not attempt partial work. It returns a brief reason to the orchestrator.
+The orchestrator treats that reason as routing input to reroute or clarify the
+task and must not retry the unchanged task with the same specialist.
 
 Good background task prompt:
 
