@@ -186,6 +186,10 @@ describe('auto-update-checker/cache', () => {
     function createPrepared(root: string, version: string) {
       const parent = join(root, 'packages');
       fs.mkdirSync(parent, { recursive: true });
+      // ponytail: re-ensure parent exists right before mkdtemp to avoid a
+      // transient ENOENT on CI runners where the dir created above isn't
+      // yet visible to mkdtempSync in the same tick.
+      fs.mkdirSync(parent, { recursive: true });
       const stagingDir = fs.mkdtempSync(join(parent, '.staging-'));
       return {
         stagingDir,
