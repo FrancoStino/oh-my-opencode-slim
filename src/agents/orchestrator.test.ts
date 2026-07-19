@@ -11,4 +11,15 @@ describe('orchestrator prompt', () => {
     expect(prompt).toContain('small bounded set of options');
     expect(prompt).toContain('ordinary dialogue that does not block work');
   });
+
+  test('treats task rejections as routing signals', () => {
+    const prompt = buildOrchestratorPrompt();
+
+    expect(prompt).toContain('Treat `<task_rejection>` as a routing signal');
+    expect(prompt).toContain('inspect its `<reason>`');
+    expect(prompt).toContain('optional `<recommended_agent>`');
+    expect(prompt).toContain(
+      'Never reissue an unchanged task to the same agent',
+    );
+  });
 });

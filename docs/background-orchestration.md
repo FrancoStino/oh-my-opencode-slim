@@ -266,6 +266,21 @@ Include:
 - validation to run or report,
 - what not to do.
 
+### Task-fit rejections
+
+A specialist may reject a task outside its role, permissions, or available
+context instead of attempting partial work. It returns:
+
+```text
+<task_rejection>
+<reason>brief explanation for the orchestrator</reason>
+<recommended_agent>@agent-name when clear</recommended_agent>
+</task_rejection>
+```
+
+`recommended_agent` is optional. The orchestrator uses the reason to reroute
+or clarify the task and must not retry the unchanged task with the same agent.
+
 Good background task prompt:
 
 ```text

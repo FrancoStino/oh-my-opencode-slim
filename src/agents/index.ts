@@ -30,6 +30,7 @@ import {
   createOrchestratorAgent,
   resolvePrompt,
 } from './orchestrator';
+import { appendTaskRejectionInstruction } from './task-rejection';
 
 export type { AgentDefinition } from './orchestrator';
 
@@ -507,6 +508,12 @@ export function createAgents(
     ...acpSubAgents,
     ...councillorAgents,
   ];
+
+  for (const agent of allSubAgents) {
+    agent.config.prompt = appendTaskRejectionInstruction(
+      agent.config.prompt ?? '',
+    );
+  }
 
   // 3. Create Orchestrator (with its own overrides and custom prompts)
   // DEFAULT_MODELS.orchestrator is undefined; model is resolved via override or
