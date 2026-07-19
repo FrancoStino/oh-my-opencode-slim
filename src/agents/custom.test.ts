@@ -1,7 +1,6 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { DEFAULT_MODELS, type PluginConfig } from '../config';
 import { createAgents, getAgentConfigs } from './index';
-import { TASK_REJECTION_INSTRUCTION } from './task-rejection';
 
 describe('custom-agent creation', () => {
   test('infers custom agents from unknown keys', () => {
@@ -24,7 +23,7 @@ describe('custom-agent creation', () => {
     expect(customAgent).toBeDefined();
     expect(customAgent?.config.model).toBe('openai/gpt-5.6');
     expect(customAgent?.config.prompt).toBe(
-      `You are the custom reviewer agent.\n\n${TASK_REJECTION_INSTRUCTION}`,
+      'You are the custom reviewer agent.',
     );
   });
 
@@ -45,7 +44,7 @@ describe('custom-agent creation', () => {
 
     expect(customAgent).toBeDefined();
     expect(customAgent?.config.prompt).toBe(
-      `You are a custom subagent for auditing.\n\n${TASK_REJECTION_INSTRUCTION}`,
+      'You are a custom subagent for auditing.',
     );
 
     const orchestrator = agents.find((agent) => agent.name === 'orchestrator');

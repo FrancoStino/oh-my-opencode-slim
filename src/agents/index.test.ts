@@ -468,7 +468,7 @@ describe('agent classification', () => {
 });
 
 describe('createAgents', () => {
-  test('adds task-rejection instructions to every subagent after prompt resolution', () => {
+  test('keeps task-rejection instructions in default subagent prompts without modifying replacements', () => {
     const agents = createAgents({
       disabled_agents: [],
       council: councilConfig(),
@@ -496,9 +496,7 @@ describe('createAgents', () => {
     const orchestrator = agents.find((agent) => agent.name === 'orchestrator');
     const explorer = agents.find((agent) => agent.name === 'explorer');
 
-    expect(explorer?.config.prompt).toBe(
-      `Replacement explorer prompt.\n\n${TASK_REJECTION_INSTRUCTION}`,
-    );
+    expect(explorer?.config.prompt).toBe('Replacement explorer prompt.');
     expect(orchestrator?.config.prompt).not.toContain(
       TASK_REJECTION_INSTRUCTION,
     );
@@ -513,8 +511,14 @@ describe('createAgents', () => {
       ]),
     );
 
-    for (const agent of agents.filter(
-      (agent) => agent.name !== 'orchestrator',
+    for (const agent of agents.filter((agent) =>
+      [
+        'observer',
+        'council',
+        'councillor',
+        'councillor-alpha',
+        'bridge',
+      ].includes(agent.name),
     )) {
       expect(agent.config.prompt).toContain(TASK_REJECTION_INSTRUCTION);
     }

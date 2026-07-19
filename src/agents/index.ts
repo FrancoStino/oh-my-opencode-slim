@@ -232,7 +232,10 @@ function buildCustomAgentDefinition(
   filePrompt?: string,
   fileAppendPrompt?: string,
 ): AgentDefinition {
-  const basePrompt = override.prompt ?? `You are the ${name} specialist.`;
+  const defaultPrompt = appendTaskRejectionInstruction(
+    `You are the ${name} specialist.`,
+  );
+  const basePrompt = override.prompt ?? defaultPrompt;
   const primaryModel = getPrimaryModelFromOverride(override);
 
   return {
@@ -389,7 +392,9 @@ export function createAgents(
 
       const override = getAgentOverride(config, name);
       const inlinePrompt = override?.prompt;
-      const defaultPrompt = agent.config.prompt ?? '';
+      const defaultPrompt = appendTaskRejectionInstruction(
+        agent.config.prompt ?? '',
+      );
 
       const basePrompt =
         inlinePrompt !== undefined ? inlinePrompt : defaultPrompt;
@@ -509,7 +514,7 @@ export function createAgents(
     ...councillorAgents,
   ];
 
-  for (const agent of allSubAgents) {
+  for (const agent of [...acpSubAgents, ...councillorAgents]) {
     agent.config.prompt = appendTaskRejectionInstruction(
       agent.config.prompt ?? '',
     );
