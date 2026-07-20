@@ -24,9 +24,18 @@ import {
   type MessageWithParts,
 } from '../types';
 import { createContinuationTokenManager } from './continuation-token-manager';
+import { createIdleReconciler } from './idle-reconciliation';
 import { createInputWaitTracker } from './input-wait-tracker';
 import type { PendingTaskCall } from './pending-call-tracker';
 import { createPendingCallTracker } from './pending-call-tracker';
+import {
+  extractTaskSummary,
+  formatCancelledTaskStatusOutput,
+  isActiveStatus,
+  isLateCancelledTaskError,
+  normalizeLateCancelledTaskOutput,
+  updateBackgroundJobFromOutput,
+} from './status-utils';
 import {
   createTaskContextTracker,
   extractReadFiles,
@@ -92,11 +101,6 @@ function createOccurrenceId(
   return `anon:${hash}`;
 }
 
-function extractTaskSummary(output: string): string | undefined {
-  const summary = /<summary>\s*([\s\S]*?)\s*<\/summary>/i.exec(output)?.[1];
-  return summary?.trim() || undefined;
-}
-
 export function createTaskSessionManagerHook(
   _ctx: PluginInput,
   options: {
@@ -133,27 +137,51 @@ export function createTaskSessionManagerHook(
   const processedInjectedCompletions = new Set<string>();
   const processedInjectedCompletionOrder: string[] = [];
   const terminalJobsInjectedByParent = new Map<string, Set<string>>();
-  const idleReconcileTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  const childIdleReconcileTimers = new Map<
-    string,
-    ReturnType<typeof setTimeout>
-  >();
-  const continuationTokens = createContinuationTokenManager({
-    onInvalidateContinuation: (sessionID) => {
-      const timer = idleReconcileTimers.get(sessionID);
-      if (timer) {
-        clearTimeout(timer);
-        idleReconcileTimers.delete(sessionID);
-      }
-    },
+
+  // Forward refs for circular deps — set after corresponding managers exist.
+  // These are captured by closure in createIdleReconciler and only called
+  // at runtime (event handlers), well after initialization completes.
+  let evaluateContinuation: (
+    parentSessionID: string,
+    sessionToken: symbol,
+  ) => Promise<void>;
+  let getContinuationSessionToken: (sessionID: string) => symbol = () => {
+    throw new Error('unreachable: getContinuationSessionToken not initialized');
+  };
+  let isCurrentContinuation: (
+    sessionID: string,
+    sessionToken: symbol,
+    evaluationToken?: symbol,
+  ) => boolean = () => false;
+  let hasInputWait: (sessionID: string) => boolean = () => false;
+
+  const idleReconciler = createIdleReconciler({
+    backgroundJobBoard,
+    evaluateContinuation: (s, t) => evaluateContinuation(s, t),
+    reconcileInjectedTerminalJobs,
+    idleReconcileDelayMs:
+      options.idleReconcileDelayMs ?? IDLE_RECONCILE_DELAY_MS,
+    isFallbackInProgress: options.isFallbackInProgress,
+    hasInputWait: (s) => hasInputWait(s),
+    getContinuationSessionToken: (s) => getContinuationSessionToken(s),
+    isCurrentContinuation: (s, t, e) => isCurrentContinuation(s, t, e),
+    taskContextTracker,
   });
+
+  const continuationTokens = createContinuationTokenManager({
+    onInvalidateContinuation: idleReconciler.onInvalidateContinuation,
+  });
+  getContinuationSessionToken = (s) =>
+    continuationTokens.getContinuationSessionToken(s);
+  isCurrentContinuation = (s, t, e) =>
+    continuationTokens.isCurrentContinuation(s, t, e);
+
   const inputWaits = createInputWaitTracker({
     shouldManageSession: options.shouldManageSession,
     invalidateContinuation: (sessionID) =>
       continuationTokens.invalidateContinuation(sessionID),
   });
-  const idleReconcileDelayMs =
-    options.idleReconcileDelayMs ?? IDLE_RECONCILE_DELAY_MS;
+  hasInputWait = (s) => inputWaits.hasInputWait(s);
 
   type SdkResponse = { data?: unknown };
   type SessionSdk = {
@@ -165,17 +193,10 @@ export function createTaskSessionManagerHook(
   const sessionSdk = (_ctx.client as unknown as { session?: SessionSdk })
     .session;
 
-  function isActiveStatus(
-    status: Record<string, unknown>,
-    sessionID: string,
-  ): boolean {
-    return Object.hasOwn(status, sessionID);
-  }
-
-  async function evaluateContinuation(
+  evaluateContinuation = async (
     parentSessionID: string,
     sessionToken: symbol,
-  ): Promise<void> {
+  ): Promise<void> => {
     const evaluationToken = Symbol(parentSessionID);
     const activeEvaluations =
       continuationTokens.evaluations.get(parentSessionID) ?? new Set<symbol>();
@@ -327,95 +348,13 @@ export function createTaskSessionManagerHook(
         continuationTokens.evaluations.delete(parentSessionID);
       }
     }
-  }
-
-  function scheduleIdleReconciliation(parentSessionID: string): void {
-    if (
-      idleReconcileTimers.has(parentSessionID) ||
-      inputWaits.hasInputWait(parentSessionID) ||
-      options.isFallbackInProgress?.(parentSessionID)
-    ) {
-      return;
-    }
-    const sessionToken =
-      continuationTokens.getContinuationSessionToken(parentSessionID);
-    const timer = setTimeout(() => {
-      idleReconcileTimers.delete(parentSessionID);
-      if (
-        !continuationTokens.isCurrentContinuation(parentSessionID, sessionToken)
-      ) {
-        return;
-      }
-      const hadTerminalUnreconciled =
-        backgroundJobBoard.hasTerminalUnreconciled(parentSessionID);
-      reconcileInjectedTerminalJobs(parentSessionID);
-      if (!hadTerminalUnreconciled) {
-        void evaluateContinuation(parentSessionID, sessionToken);
-      }
-    }, idleReconcileDelayMs).unref?.();
-    idleReconcileTimers.set(parentSessionID, timer);
-  }
-
-  /**
-   * Delay child idle→completed reconciliation. Immediate reconcile races
-   * ForegroundFallbackManager: OpenCode can emit idle for a rate-limited
-   * child before FG sets isFallbackInProgress, marking the job completed
-   * while FG re-prompts and the session keeps working (false cancel/complete).
-   * Re-check running state, fallback-in-progress, and lastLiveBusyAt after
-   * the delay so a post-idle busy from the fallback re-prompt wins.
-   */
-  function scheduleChildIdleReconciliation(
-    sessionID: string,
-    idleObservedAt: number,
-  ): void {
-    if (childIdleReconcileTimers.has(sessionID)) return;
-    if (options.isFallbackInProgress?.(sessionID)) return;
-
-    const timer = setTimeout(() => {
-      childIdleReconcileTimers.delete(sessionID);
-      if (options.isFallbackInProgress?.(sessionID)) return;
-
-      const job = backgroundJobBoard.get(sessionID);
-      if (!job || job.state !== 'running') return;
-
-      // Busy after the idle means the session recovered (e.g. FG re-prompt).
-      if (
-        job.lastLiveBusyAt !== undefined &&
-        job.lastLiveBusyAt > idleObservedAt
-      ) {
-        return;
-      }
-
-      log('[task-session-manager] reconciled running job from idle', {
-        sessionID,
-        alias: job.alias,
-        parentSessionID: job.parentSessionID,
-      });
-      backgroundJobBoard.updateStatus({
-        taskID: sessionID,
-        state: 'completed',
-        resultSummary: 'Background task completed (reconciled from idle event)',
-      });
-      backgroundJobBoard.markReconciled(sessionID);
-      taskContextTracker.pendingManagedTaskIds.delete(sessionID);
-      backgroundJobBoard.addContext(
-        sessionID,
-        taskContextTracker.contextFilesForPrompt(sessionID),
-      );
-      taskContextTracker.prune(backgroundJobBoard);
-    }, idleReconcileDelayMs).unref?.();
-    childIdleReconcileTimers.set(sessionID, timer);
-  }
+  };
 
   if (options.coordinator) {
     options.coordinator.onSessionDeleted((sessionId) => {
       continuationTokens.clearContinuation(sessionId);
       inputWaits.clearInputWaits(sessionId);
-      const pendingChildIdle = childIdleReconcileTimers.get(sessionId);
-      if (pendingChildIdle) {
-        clearTimeout(pendingChildIdle);
-        childIdleReconcileTimers.delete(sessionId);
-      }
+      idleReconciler.clearIdleTimers(sessionId);
       // During a foreground fallback abort/re-prompt cycle, the session
       // is being torn down and immediately recreated with a fallback model.
       // Dropping the job from the board here would make the orchestrator
@@ -430,69 +369,6 @@ export function createTaskSessionManagerHook(
       taskContextTracker.prune(backgroundJobBoard);
       pendingCallTracker.clearSession(sessionId);
     });
-  }
-
-  function updateBackgroundJobFromOutput(
-    output: unknown,
-  ): BackgroundJobRecord | undefined {
-    if (typeof output !== 'string') return undefined;
-
-    const status = parseTaskStatusOutput(output);
-    if (!status) return undefined;
-
-    log('[task-session-manager] parsed task output status', {
-      taskID: status.taskID,
-      state: status.state,
-      timedOut: status.timedOut,
-      hasResult: Boolean(status.result),
-    });
-
-    const existing = backgroundJobBoard.get(status.taskID);
-    if (isLateCancelledTaskError(existing, status.state)) {
-      log('[task-session-manager] suppressed late cancelled task error', {
-        taskID: status.taskID,
-        alias: existing?.alias,
-        parsedState: status.state,
-        boardState: existing?.state,
-        terminalState: existing?.terminalState,
-        result: status.result,
-      });
-      return existing;
-    }
-
-    const updated = backgroundJobBoard.updateStatus({
-      taskID: status.taskID,
-      state: status.state,
-      timedOut: status.timedOut,
-      resultSummary: status.result,
-    });
-    if (!updated) {
-      log('[task-session-manager] ignored status for unknown background job', {
-        taskID: status.taskID,
-        state: status.state,
-      });
-      return undefined;
-    }
-
-    log('[task-session-manager] background job status updated', {
-      taskID: updated.taskID,
-      alias: updated.alias,
-      parentSessionID: updated.parentSessionID,
-      state: updated.state,
-      terminalUnreconciled: updated.terminalUnreconciled,
-      timedOut: updated.timedOut,
-    });
-
-    if (backgroundJobBoard.isTerminalUnreconciled(updated.taskID)) {
-      taskContextTracker.pendingManagedTaskIds.delete(updated.taskID);
-      backgroundJobBoard.addContext(
-        updated.taskID,
-        taskContextTracker.contextFilesForPrompt(updated.taskID),
-      );
-      taskContextTracker.prune(backgroundJobBoard);
-    }
-
-    return updated;
   }
 
   function updateFromInjectedCompletion(
@@ -552,7 +428,11 @@ export function createTaskSessionManagerHook(
 
     if (processedInjectedCompletions.has(occurrenceId)) return undefined;
 
-    const updated = updateBackgroundJobFromOutput(part.text);
+    const updated = updateBackgroundJobFromOutput(
+      part.text,
+      backgroundJobBoard,
+      taskContextTracker,
+    );
     if (!updated) return undefined;
 
     log('[task-session-manager] processed injected background completion', {
@@ -712,8 +592,7 @@ export function createTaskSessionManagerHook(
       ) {
         return;
       }
-      continuationTokens.invalidateContinuation(sessionID);
-      continuationTokens.consumed.delete(sessionID);
+      continuationTokens.clearContinuation(sessionID);
     },
 
     'tool.execute.before': async (
@@ -877,7 +756,7 @@ export function createTaskSessionManagerHook(
         return;
       }
 
-      normalizeLateCancelledTaskOutput(output);
+      normalizeLateCancelledTaskOutput(output, backgroundJobBoard);
       const status = parseTaskStatusOutput(output.output);
       if (status) {
         const existing = backgroundJobBoard.get(status.taskID);
@@ -1041,12 +920,9 @@ export function createTaskSessionManagerHook(
       }
 
       if (input.event.type === 'server.instance.disposed') {
-        for (const timer of childIdleReconcileTimers.values()) {
-          clearTimeout(timer);
-        }
-        childIdleReconcileTimers.clear();
+        const idleSessionIds = idleReconciler.clearAllTimers();
         const continuationSessionIDs = new Set([
-          ...idleReconcileTimers.keys(),
+          ...idleSessionIds,
           ...continuationTokens.sessionTokens.keys(),
           ...continuationTokens.evaluations.keys(),
           ...continuationTokens.consumed,
@@ -1079,7 +955,7 @@ export function createTaskSessionManagerHook(
           runningJobForSession: job?.state === 'running' || false,
         });
         if (sessionId && options.shouldManageSession(sessionId)) {
-          scheduleIdleReconciliation(sessionId);
+          idleReconciler.scheduleIdleReconciliation(sessionId);
         }
 
         // Fallback: for background child sessions that go idle without
@@ -1087,7 +963,7 @@ export function createTaskSessionManagerHook(
         // session being idle is itself the completion signal.
         // Delayed so FG can claim the session before we mark completed.
         if (job && sessionId && job.state === 'running') {
-          scheduleChildIdleReconciliation(sessionId, Date.now());
+          idleReconciler.scheduleChildIdleReconciliation(sessionId, Date.now());
         }
         return;
       }
@@ -1160,12 +1036,10 @@ export function createTaskSessionManagerHook(
         }
         // Live busy cancels a pending child idle-reconcile — the session
         // recovered (FG re-prompt or continued work).
+        // Note: invalidateContinuation above already cleared the parent
+        // idle-reconcile timer; clearIdleTimers handles the child timer.
         if (sessionId) {
-          const pendingChildIdle = childIdleReconcileTimers.get(sessionId);
-          if (pendingChildIdle) {
-            clearTimeout(pendingChildIdle);
-            childIdleReconcileTimers.delete(sessionId);
-          }
+          idleReconciler.clearIdleTimers(sessionId);
         }
         const before = sessionId
           ? backgroundJobBoard.get(sessionId)
@@ -1211,52 +1085,4 @@ export function createTaskSessionManagerHook(
       });
     },
   };
-
-  function normalizeLateCancelledTaskOutput(output: {
-    output: unknown;
-    metadata?: unknown;
-  }): void {
-    if (typeof output.output !== 'string') return;
-    const status = parseTaskStatusOutput(output.output);
-    if (!status) return;
-    const existing = backgroundJobBoard.get(status.taskID);
-    if (!isLateCancelledTaskError(existing, status.state)) return;
-    log('[task-session-manager] normalized late cancelled task output', {
-      taskID: status.taskID,
-      alias: existing?.alias,
-      state: existing?.state,
-      terminalState: existing?.terminalState,
-      result: status.result,
-    });
-    output.output = formatCancelledTaskStatusOutput(
-      status.taskID,
-      backgroundJobBoard.getResultSummary(status.taskID),
-    );
-    if (isObjectRecord(output) && isObjectRecord(output.metadata)) {
-      output.metadata.state = 'cancelled';
-    }
-  }
-}
-
-function isLateCancelledTaskError(
-  job: BackgroundJobRecord | undefined,
-  state: string,
-): boolean {
-  if (state !== 'error') return false;
-  if (!job?.cancellationRequested) return false;
-  return job.state === 'cancelled' || job.terminalState === 'cancelled';
-}
-
-function formatCancelledTaskStatusOutput(
-  taskID: string,
-  summary = 'cancelled',
-): string {
-  return [
-    `task_id: ${taskID}`,
-    'state: cancelled',
-    '',
-    '<task_error>',
-    summary,
-    '</task_error>',
-  ].join('\n');
 }
