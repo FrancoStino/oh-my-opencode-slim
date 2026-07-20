@@ -154,6 +154,12 @@ describe('parseArgs companion', () => {
   });
 });
 
+describe('parseArgs skills', () => {
+  test('parses force skill synchronization mode', () => {
+    expect(parseArgs(['--skills=force']).skills).toBe('force');
+  });
+});
+
 describe('configureBackgroundSubagents', () => {
   let tempDir: string | undefined;
   const originalBackgroundEnv =
@@ -181,7 +187,6 @@ describe('configureBackgroundSubagents', () => {
 
     try {
       const result = await configureBackgroundSubagents({
-        hasTmux: false,
         installCustomSkills: false,
         promptForStar: false,
         reset: false,
@@ -215,7 +220,6 @@ describe('configureBackgroundSubagents', () => {
 
     try {
       const result = await configureBackgroundSubagents({
-        hasTmux: false,
         installCustomSkills: false,
         promptForStar: false,
         reset: false,

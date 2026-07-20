@@ -973,32 +973,6 @@
         }
       }
     },
-    "tmux": {
-      "type": "object",
-      "properties": {
-        "enabled": {
-          "default": false,
-          "type": "boolean"
-        },
-        "layout": {
-          "default": "main-vertical",
-          "type": "string",
-          "enum": [
-            "main-horizontal",
-            "main-vertical",
-            "tiled",
-            "even-horizontal",
-            "even-vertical"
-          ]
-        },
-        "main_pane_size": {
-          "default": 60,
-          "type": "number",
-          "minimum": 20,
-          "maximum": 80
-        }
-      }
-    },
     "websearch": {
       "type": "object",
       "properties": {
@@ -1133,38 +1107,15 @@
             }
           }
         },
-        "timeout": {
-          "default": 180000,
-          "type": "number",
-          "minimum": 0
-        },
         "default_preset": {
           "default": "default",
           "type": "string"
-        },
-        "councillor_execution_mode": {
-          "default": "parallel",
-          "description": "Execution mode for councillors. \"serial\" runs them one at a time (required for single-model systems). \"parallel\" runs them concurrently (default, faster for multi-model systems).",
-          "type": "string",
-          "enum": [
-            "parallel",
-            "serial"
-          ]
-        },
-        "councillor_retries": {
-          "default": 3,
-          "description": "Number of retry attempts for councillors that return empty responses (e.g. due to provider rate limiting). Default: 3 retries.",
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 5
-        },
-        "master": {
-          "description": "DEPRECATED - ignored. Council agent synthesizes directly."
         }
       },
       "required": [
         "presets"
-      ]
+      ],
+      "additionalProperties": {}
     },
     "companion": {
       "type": "object",

@@ -14,6 +14,7 @@ import {
   getDisabledAgents,
   isSubagent,
 } from './index';
+import { TASK_REJECTION_INSTRUCTION } from './task-rejection';
 
 function councilConfig() {
   const parsed = CouncilConfigSchema.parse({
@@ -182,15 +183,6 @@ describe('orchestrator agent', () => {
     ).toBe('allow');
   });
 
-  test('orchestrator is denied access to council_session', () => {
-    const agents = createAgents();
-    const orchestrator = agents.find((a) => a.name === 'orchestrator');
-    expect(
-      (orchestrator as { config: { permission: Record<string, unknown> } })
-        .config.permission.council_session,
-    ).toBe('deny');
-  });
-
   test('orchestrator is allowed to invoke cancel_task', () => {
     const agents = createAgents();
     const orchestrator = agents.find((a) => a.name === 'orchestrator');
@@ -338,42 +330,10 @@ describe('skill permissions', () => {
 });
 
 describe('tool permissions', () => {
-  test('council agent is allowed to invoke council_session', () => {
-    const agents = createAgents({
-      council: councilConfig(),
-    });
-    const council = agents.find((a) => a.name === 'council');
-    expect(
-      (council as { config: { permission: Record<string, unknown> } }).config
-        .permission.council_session,
-    ).toBe('allow');
-  });
-
-  test('oracle is denied access to council_session', () => {
-    const agents = createAgents();
-    const oracle = agents.find((a) => a.name === 'oracle');
-    expect(
-      (oracle as { config: { permission: Record<string, unknown> } }).config
-        .permission.council_session,
-    ).toBe('deny');
-  });
-
-  test('explorer is denied access to council_session', () => {
-    const agents = createAgents();
-    const explorer = agents.find((a) => a.name === 'explorer');
-    expect(
-      (explorer as { config: { permission: Record<string, unknown> } }).config
-        .permission.council_session,
-    ).toBe('deny');
-  });
-
-  test('councillor is denied access to council_session', () => {
-    const agents = createAgents();
-    const councillor = agents.find((a) => a.name === 'councillor');
-    expect(
-      (councillor as { config: { permission: Record<string, unknown> } }).config
-        .permission.council_session,
-    ).toBe('deny');
+  test('dynamic councillor agents are prefixed to avoid reserved agent type names', () => {
+    const agents = createAgents({ council: councilConfig() });
+    expect(agents.some((a) => a.name === 'councillor-alpha')).toBe(true);
+    expect(agents.some((a) => a.name === 'alpha')).toBe(false);
   });
 
   test('oracle is denied access to cancel_task', () => {
@@ -403,24 +363,27 @@ describe('tool permissions', () => {
     ).toBe('deny');
   });
 
-  test('council agent is read-only except council_session', () => {
+  test('council agent has synthesis-only (deny-all) permissions', () => {
     const agents = createAgents({
       council: councilConfig(),
     });
     const council = agents.find((a) => a.name === 'council');
     const permission = council?.config.permission as Record<string, string>;
     expect(permission['*']).toBe('deny');
-    expect(permission.read).toBe('allow');
-    expect(permission.glob).toBe('allow');
-    expect(permission.grep).toBe('allow');
-    expect(permission.ast_grep_search).toBe('allow');
-    expect(permission.council_session).toBe('allow');
+    expect(permission.read).toBe('deny');
+    expect(permission.glob).toBe('deny');
+    expect(permission.grep).toBe('deny');
+    expect(permission.ast_grep_search).toBe('deny');
+    expect(permission.codesearch).toBe('deny');
+    expect(permission.lsp).toBe('deny');
+    expect(permission.list).toBe('deny');
     expect(permission.bash).toBe('deny');
     expect(permission.edit).toBe('deny');
     expect(permission.write).toBe('deny');
     expect(permission.apply_patch).toBe('deny');
     expect(permission.ast_grep_replace).toBe('deny');
     expect(permission.task).toBe('deny');
+    expect(permission.question).toBe('deny');
   });
 
   test('councillor remains read-only after default permissions are applied', () => {
@@ -433,7 +396,6 @@ describe('tool permissions', () => {
     expect(permission.read).toBe('allow');
     expect(permission.glob).toBe('allow');
     expect(permission.grep).toBe('allow');
-    expect(permission.council_session).toBe('deny');
     expect(permission.bash).toBe('deny');
     expect(permission.edit).toBe('deny');
     expect(permission.write).toBe('deny');
@@ -441,6 +403,22 @@ describe('tool permissions', () => {
     expect(permission.ast_grep_replace).toBe('deny');
     expect(permission.task).toBe('deny');
   });
+});
+
+test('orchestrator prompt includes Council Mode block when councillors exist', () => {
+  const agents = createAgents({ council: councilConfig() });
+  const orchestrator = agents.find((a) => a.name === 'orchestrator');
+  const prompt = orchestrator?.config.prompt as string;
+  expect(prompt).toContain('## Council Mode');
+  expect(prompt).toContain("task(subagent_type='councillor-alpha'");
+  expect(prompt).toContain('proceed without it');
+});
+
+test('orchestrator prompt excludes Council Mode when no councillors', () => {
+  const agents = createAgents();
+  const orchestrator = agents.find((a) => a.name === 'orchestrator');
+  const prompt = orchestrator?.config.prompt as string;
+  expect(prompt).not.toContain('## Council Mode');
 });
 
 describe('isSubagent type guard', () => {
@@ -490,6 +468,62 @@ describe('agent classification', () => {
 });
 
 describe('createAgents', () => {
+  test('keeps task-rejection instructions in default subagent prompts without modifying replacements', () => {
+    const agents = createAgents({
+      disabled_agents: [],
+      council: councilConfig(),
+      agents: {
+        explorer: {
+          model: 'test/explorer',
+          prompt: 'Replacement explorer prompt.',
+        },
+        reviewer: {
+          model: 'test/reviewer',
+          prompt: 'Custom reviewer prompt.',
+        },
+      },
+      acpAgents: {
+        bridge: {
+          command: 'bridge-acp',
+          args: [],
+          env: {},
+          timeoutMs: 0,
+          permissionMode: 'ask',
+        },
+      },
+    });
+
+    const orchestrator = agents.find((agent) => agent.name === 'orchestrator');
+    const explorer = agents.find((agent) => agent.name === 'explorer');
+
+    expect(explorer?.config.prompt).toBe('Replacement explorer prompt.');
+    expect(orchestrator?.config.prompt).not.toContain(
+      TASK_REJECTION_INSTRUCTION,
+    );
+    expect(agents.map((agent) => agent.name)).toEqual(
+      expect.arrayContaining([
+        'observer',
+        'council',
+        'councillor',
+        'councillor-alpha',
+        'reviewer',
+        'bridge',
+      ]),
+    );
+
+    for (const agent of agents.filter((agent) =>
+      [
+        'observer',
+        'council',
+        'councillor',
+        'councillor-alpha',
+        'bridge',
+      ].includes(agent.name),
+    )) {
+      expect(agent.config.prompt).toContain(TASK_REJECTION_INSTRUCTION);
+    }
+  });
+
   test('creates all agents without config', () => {
     const agents = createAgents();
     const names = agents.map((a) => a.name);
@@ -559,41 +593,7 @@ describe('council agent model resolution', () => {
     expect(councillor?.config.model).toBe(DEFAULT_MODELS.councillor);
   });
 
-  test('council falls back to legacy master.model when no preset override', () => {
-    // Simulates a pre-1.0.0 config with council.master.model but no council
-    // entry in the agent preset - the exact scenario from issue #369.
-    const config: PluginConfig = {
-      agents: {
-        oracle: { model: 'openai/gpt-5.6' },
-      },
-      council: {
-        ...councilConfig(),
-        _legacyMasterModel: 'anthropic/claude-opus-4-6',
-      },
-    };
-    const agents = createAgents(config);
-    const council = agents.find((a) => a.name === 'council');
-    expect(council?.config.model).toBe('anthropic/claude-opus-4-6');
-  });
-
-  test('council preset override takes precedence over legacy master.model', () => {
-    // If user has explicit council in preset, that wins - legacy is ignored.
-    const config: PluginConfig = {
-      agents: {
-        council: { model: 'google/gemini-3-pro' },
-      },
-      council: {
-        ...councilConfig(),
-        _legacyMasterModel: 'anthropic/claude-opus-4-6',
-      },
-    };
-    const agents = createAgents(config);
-    const council = agents.find((a) => a.name === 'council');
-    expect(council?.config.model).toBe('google/gemini-3-pro');
-  });
-
-  test('council uses default when no legacy master and no preset override', () => {
-    // No legacy master, no preset override → standard default
+  test('council uses default when no preset override', () => {
     const config: PluginConfig = {
       council: councilConfig(),
     };
@@ -602,10 +602,8 @@ describe('council agent model resolution', () => {
     expect(council?.config.model).toBe(DEFAULT_MODELS.council);
   });
 
-  test('end-to-end: raw master.model config flows through schema to council agent', () => {
-    // Integration test: start from raw user config with deprecated master.model,
-    // parse through CouncilConfigSchema, then pass to createAgents.
-    // This validates the full seam between schema transform and agent resolution.
+  test('deprecated council.master field is ignored', () => {
+    // Verify that the deprecated master field is reported but not applied.
     const rawCouncilConfig = {
       master: { model: 'anthropic/claude-opus-4-6' },
       presets: {
@@ -619,13 +617,14 @@ describe('council agent model resolution', () => {
     expect(parsed.success).toBe(true);
 
     if (parsed.success) {
+      expect(parsed.data._deprecated).toEqual(['master']);
       const config: PluginConfig = {
         council: parsed.data,
       };
       const agents = createAgents(config);
       const council = agents.find((a) => a.name === 'council');
-      // Legacy master.model should flow through schema → agent
-      expect(council?.config.model).toBe('anthropic/claude-opus-4-6');
+      // Master is deprecated and no longer used for model fallback
+      expect(council?.config.model).toBe(DEFAULT_MODELS.council);
     }
   });
 });

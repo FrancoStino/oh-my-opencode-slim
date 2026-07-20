@@ -17,7 +17,6 @@ describe('providers', () => {
 
   test('generateLiteConfig defaults to openai and includes generated presets', () => {
     const config = generateLiteConfig({
-      hasTmux: false,
       installCustomSkills: false,
       backgroundSubagents: 'no',
       reset: false,
@@ -35,36 +34,34 @@ describe('providers', () => {
     const agents = (config.presets as any).openai;
     expect(agents).toBeDefined();
     expect(agents.orchestrator.model).toBe('openai/gpt-5.6-terra');
-    expect(agents.orchestrator.variant).toBe('medium');
+    expect(agents.orchestrator.variant).toBe('xhigh');
     expect(agents.fixer.model).toBe('openai/gpt-5.6-luna');
-    expect(agents.fixer.variant).toBe('medium');
+    expect(agents.fixer.variant).toBe('xhigh');
   });
 
-  test('generateLiteConfig uses correct OpenAI models', () => {
+  test('preserves exact OpenAI model and variant mappings', () => {
     const config = generateLiteConfig({
-      hasTmux: false,
       installCustomSkills: false,
       backgroundSubagents: 'no',
       reset: false,
     });
 
     const agents = (config.presets as any).openai;
-    expect(agents.orchestrator.model).toBe(
-      MODEL_MAPPINGS.openai.orchestrator.model,
-    );
-    expect(agents.oracle.model).toBe('openai/gpt-5.6-sol');
-    expect(agents.oracle.variant).toBe('high');
-    expect(agents.librarian.model).toBe('openai/gpt-5.6-luna');
-    expect(agents.librarian.variant).toBe('low');
-    expect(agents.explorer.model).toBe('openai/gpt-5.6-luna');
-    expect(agents.explorer.variant).toBe('low');
-    expect(agents.designer.model).toBe('openai/gpt-5.6-luna');
-    expect(agents.designer.variant).toBe('medium');
+    const expected = {
+      orchestrator: { model: 'openai/gpt-5.6-terra', variant: 'xhigh' },
+      oracle: { model: 'openai/gpt-5.6-sol', variant: 'xhigh' },
+      librarian: { model: 'openai/gpt-5.6-luna', variant: 'low' },
+      explorer: { model: 'openai/gpt-5.6-luna', variant: 'low' },
+      designer: { model: 'openai/gpt-5.6-luna', variant: 'medium' },
+      fixer: { model: 'openai/gpt-5.6-luna', variant: 'xhigh' },
+    } as const;
+
+    expect(MODEL_MAPPINGS.openai).toEqual(expected);
+    expect(agents).toMatchObject(expected);
   });
 
   test('generateLiteConfig can set opencode-go as active preset', () => {
     const config = generateLiteConfig({
-      hasTmux: false,
       installCustomSkills: false,
       preset: 'opencode-go',
       backgroundSubagents: 'no',
@@ -95,7 +92,6 @@ describe('providers', () => {
   test('generateLiteConfig rejects unsupported preset', () => {
     expect(() =>
       generateLiteConfig({
-        hasTmux: false,
         installCustomSkills: false,
         preset: 'not-real',
         backgroundSubagents: 'no',
@@ -107,7 +103,6 @@ describe('providers', () => {
   test('generateLiteConfig rejects non-generated model mappings as active presets', () => {
     expect(() =>
       generateLiteConfig({
-        hasTmux: false,
         installCustomSkills: false,
         preset: 'kimi',
         backgroundSubagents: 'no',
@@ -119,7 +114,6 @@ describe('providers', () => {
   test('generateLiteConfig rejects inherited property names as presets', () => {
     expect(() =>
       generateLiteConfig({
-        hasTmux: false,
         installCustomSkills: false,
         preset: 'toString',
         backgroundSubagents: 'no',
@@ -128,22 +122,8 @@ describe('providers', () => {
     ).toThrow('Unsupported preset "toString"');
   });
 
-  test('generateLiteConfig enables tmux when requested', () => {
-    const config = generateLiteConfig({
-      hasTmux: true,
-      installCustomSkills: false,
-      backgroundSubagents: 'no',
-      reset: false,
-    });
-
-    expect(config.tmux).toBeDefined();
-    expect((config.tmux as any).enabled).toBe(true);
-    expect((config.tmux as any).layout).toBe('main-vertical');
-  });
-
   test('generateLiteConfig companion: yes', () => {
     const config = generateLiteConfig({
-      hasTmux: false,
       installCustomSkills: false,
       backgroundSubagents: 'no',
       reset: false,
@@ -158,7 +138,6 @@ describe('providers', () => {
 
   test('generateLiteConfig companion: no or omitted', () => {
     const configYes = generateLiteConfig({
-      hasTmux: false,
       installCustomSkills: false,
       backgroundSubagents: 'no',
       reset: false,
@@ -167,7 +146,6 @@ describe('providers', () => {
     expect(configYes.companion).toBeUndefined();
 
     const configOmitted = generateLiteConfig({
-      hasTmux: false,
       installCustomSkills: false,
       backgroundSubagents: 'no',
       reset: false,
@@ -177,7 +155,6 @@ describe('providers', () => {
 
   test('generateLiteConfig includes default skills', () => {
     const config = generateLiteConfig({
-      hasTmux: false,
       installCustomSkills: false,
       backgroundSubagents: 'no',
       reset: false,
@@ -205,7 +182,6 @@ describe('providers', () => {
 
   test('generateLiteConfig includes mcps field', () => {
     const config = generateLiteConfig({
-      hasTmux: false,
       installCustomSkills: false,
       backgroundSubagents: 'no',
       reset: false,
@@ -220,7 +196,6 @@ describe('providers', () => {
 
   test('generateLiteConfig openai includes correct mcps', () => {
     const config = generateLiteConfig({
-      hasTmux: false,
       installCustomSkills: false,
       backgroundSubagents: 'no',
       reset: false,

@@ -80,14 +80,14 @@ const AGENT_DESCRIPTIONS: Record<string, string> = {
 
   council: `@council
 - Lane: High-stakes multi-model decision support
-- Role: Multi-LLM consensus engine that runs several councillors, synthesizes their views, and returns a structured council report.
+- Role: Multi-LLM consensus engine that receives raw councillor responses and synthesizes them into a structured council report.
 - Permissions: Read files
 - Stats: 3x slower than orchestrator, 3x or more cost of orchestrator
-- Capabilities: Runs multiple models in parallel, compares their answers, resolves disagreements, and produces a final synthesized answer plus councillor details and consensus summary.
+- Capabilities: Synthesizes responses from independently-dispatched councillors, compares their answers, resolves disagreements, and produces a final synthesized answer plus councillor details and consensus summary.
 - **Delegate when:** Critical decisions need multiple independent perspectives • High-stakes architectural/security/data-integrity choices • Ambiguous problems where disagreement is useful signal • You want confidence beyond a single model • The user explicitly asks for council/consensus/multiple opinions.
 - **Don't delegate when:** Straightforward tasks you're confident about • Speed matters more than confidence • Routine implementation/debugging • A single specialist is clearly the right tool • You only need current docs/search/code review rather than multi-model consensus.
 - **How to call:** Send the full question/task and relevant context. Be explicit about what decision, trade-off, or answer the council should resolve. Do not ask council to do routine code edits.
-- **Result handling:** Council returns a structured response that may include: synthesized Council Response, individual Councillor Details, and Council Summary/confidence. Preserve that structure when the user asked for council output. Do not pretend the council only returned a final answer. If you need to act on the council result, first briefly state the council's recommendation, then proceed.
+- **Result handling:** Council returns a structured response that may include: synthesized Council Response, individual Per-Councillor Details, and Council Summary/confidence. Preserve that structure when the user asked for council output. Do not pretend the council only returned a final answer. If you need to act on the council result, first briefly state the council's recommendation, then proceed.
 - **Rule of thumb:** Need second/third opinions from different models? → @council. Need one expert lane? → use the specialist. Need final synthesis? → handle directly.`,
 
   observer: `@observer
@@ -115,10 +115,14 @@ const PARALLEL_DELEGATION_EXAMPLES = [
  * @param disabledAgents - Set of disabled agent names to exclude from the prompt
  * @returns The complete orchestrator prompt string
  */
-export function buildOrchestratorPrompt(disabledAgents?: Set<string>): string {
+export function buildOrchestratorPrompt(
+  disabledAgents?: Set<string>,
+  excludeDescriptions?: string[],
+): string {
   // Filter agent descriptions
   const enabledAgents = Object.entries(AGENT_DESCRIPTIONS)
     .filter(([name]) => !disabledAgents?.has(name))
+    .filter(([name]) => !excludeDescriptions?.includes(name))
     .map(([, desc]) => desc)
     .join('\n\n');
 
@@ -162,7 +166,8 @@ Review available agents and lane rules. Before beginning non-trivial work, ident
 
 **Routing threshold:**
 - Handle directly only for one isolated, clear, low-risk action where delegation would cost more than execution.
-- For multi-step implementation, broad discovery, external research, visual work, or complex debugging, delegate to the suitable specialist.
+- Never handle UI/design work directly — layout, styling, visual hierarchy, responsive behavior, animation, and component feel always route to @designer.
+- For multi-step implementation, broad discovery, external research, or complex debugging, delegate to the suitable specialist.
 - If two or more parts can proceed independently, dispatch them in parallel before starting dependent work.
 - Do not delegate merely because an agent exists. Do not keep substantive work entirely in the orchestrator merely because each individual step seems easy.
 
@@ -195,7 +200,7 @@ Balance: respect dependencies, avoid parallelizing what must be sequential, and 
 ### Background Task Discipline
 - Prefer \`task(..., background: true)\` for delegated work that can run independently.
 - For work already chosen for delegation, launch independent specialist lanes in the background so the orchestrator stays unblocked and can reconcile results when they return.
-- Track each task's specialist, objective, task/session ID, and file/topic ownership.
+- Never reissue an unchanged task to the same specialist after a rejection; adjust its scope or context before retrying.
 - Continue orchestration only on non-overlapping work; otherwise briefly report what was launched and stop.
 - Before local edits or another writer task, compare against running task scopes.
 - Parallel background tasks are allowed only when their write scopes do not conflict.
@@ -236,6 +241,8 @@ Balance: respect dependencies, avoid parallelizing what must be sequential, and 
 - If request is vague or has multiple valid interpretations, ask a targeted question before proceeding
 - Don't guess at critical details (file paths, API choices, architectural decisions)
 - Do make reasonable assumptions for minor details and state them briefly
+- When user input is required before work can continue—including clarification, permission, or command output—use the \`question\` tool rather than leaving an ordinary assistant prompt waiting. Enable custom input, request a concise pasted response or command output, and provide a small bounded set of options whenever the tool schema requires options.
+- For ordinary dialogue that does not block work, answer normally and do not use the question tool gratuitously.
 
 ## Concise Execution
 - Answer directly, no preamble
@@ -270,8 +277,12 @@ export function createOrchestratorAgent(
   customPrompt?: string,
   customAppendPrompt?: string,
   disabledAgents?: Set<string>,
+  excludeDescriptions?: string[],
 ): AgentDefinition {
-  const basePrompt = buildOrchestratorPrompt(disabledAgents);
+  const basePrompt = buildOrchestratorPrompt(
+    disabledAgents,
+    excludeDescriptions,
+  );
   const prompt = resolvePrompt(basePrompt, customPrompt, customAppendPrompt);
 
   const definition: AgentDefinition = {
