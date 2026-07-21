@@ -1088,9 +1088,16 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
     // Track which agent each session uses (needed for serve-mode prompt
     // injection)
     'chat.message': async (
-      input: { sessionID: string; agent?: string; parts?: unknown[] },
+      input: {
+        sessionID: string;
+        agent?: string;
+        parts?: unknown[];
+        /** OpenCode chat.message message identity when present. */
+        messageID?: string;
+      },
       output?: {
         message?: {
+          id?: string;
           agent?: string;
           role?: string;
           sessionID?: string;

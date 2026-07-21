@@ -80,12 +80,16 @@ export function createContinuationTokenManager(options?: {
 
   /**
    * Real external user message: process-global attempt clear is idempotent per
-   * message ID (only the first observe opens a new epoch). Always invalidate
-   * this instance's local timers/tokens/reservations so a pre-message idle
-   * timer on a second hook cannot fire SDK reads after the shared observe.
+   * message identity (string ID or same-process message object). Always
+   * invalidate this instance's local timers/tokens/reservations so a
+   * pre-message idle timer on a second hook cannot fire SDK reads after the
+   * shared observe.
    */
-  function rearmForUserMessage(sessionID: string, messageID: string): void {
-    rearmContinuationForUserMessage(sessionID, messageID);
+  function rearmForUserMessage(
+    sessionID: string,
+    messageIdentity: string | object,
+  ): void {
+    rearmContinuationForUserMessage(sessionID, messageIdentity);
     invalidateContinuation(sessionID);
   }
 

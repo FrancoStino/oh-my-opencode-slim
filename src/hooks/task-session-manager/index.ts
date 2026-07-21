@@ -207,18 +207,18 @@ export function createTaskSessionManagerHook(
       const parts = Array.isArray(outputRecord?.parts)
         ? outputRecord.parts
         : inputMessage?.parts;
-      // Stable identity from chat.message (input.messageID or output.message.id).
-      // Required for process-global idempotent rearm across hook instances.
-      const messageID =
+      // Safe identity order (Oracle): input.messageID → output.message.id →
+      // same-process output.message object → fail closed.
+      const messageIdentity: string | object | undefined =
         typeof inputMessage?.messageID === 'string' &&
         inputMessage.messageID.length > 0
           ? inputMessage.messageID
           : typeof outputMessage?.id === 'string' && outputMessage.id.length > 0
             ? outputMessage.id
-            : undefined;
+            : outputMessage;
       if (
         !sessionID ||
-        !messageID ||
+        messageIdentity === undefined ||
         (typeof outputMessage?.role === 'string' &&
           outputMessage.role !== 'user') ||
         !options.shouldManageSession(sessionID) ||
@@ -235,7 +235,7 @@ export function createTaskSessionManagerHook(
       ) {
         return;
       }
-      continuationTokens.rearmForUserMessage(sessionID, messageID);
+      continuationTokens.rearmForUserMessage(sessionID, messageIdentity);
     },
 
     'tool.execute.before': (

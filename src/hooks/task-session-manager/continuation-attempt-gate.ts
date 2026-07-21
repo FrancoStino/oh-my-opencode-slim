@@ -10,13 +10,17 @@ type AttemptState =
   | { status: 'reserved'; owner: symbol }
   | { status: 'consumed' };
 
+type RearmIdentity = string | symbol;
+
 type ContinuationAttemptStore = {
   attempts: Map<string, AttemptState>;
   /**
-   * Last external user message ID that rearmed each session. Process-global so
-   * two hook instances observing the same chat.message open only one epoch.
+   * Last external user-message identity that rearmed each session.
+   * string = chat.message ID; symbol = same-process object identity fallback.
    */
-  lastRearmMessageID: Map<string, string>;
+  lastRearmIdentity: Map<string, RearmIdentity>;
+  /** Stable symbols for ID-less output.message object identity (same process). */
+  messageObjectIdentity: WeakMap<object, symbol>;
 };
 
 const STORE_KEY = Symbol.for('oh-my-opencode-slim.continuation-attempt-gate');
@@ -27,9 +31,20 @@ function getStore(): ContinuationAttemptStore {
   };
   globalWithStore[STORE_KEY] ??= {
     attempts: new Map(),
-    lastRearmMessageID: new Map(),
+    lastRearmIdentity: new Map(),
+    messageObjectIdentity: new WeakMap(),
   };
   return globalWithStore[STORE_KEY];
+}
+
+function resolveRearmIdentity(identity: string | object): RearmIdentity {
+  if (typeof identity === 'string') return identity;
+  const store = getStore();
+  const existing = store.messageObjectIdentity.get(identity);
+  if (existing) return existing;
+  const token = Symbol('continuation-rearm-message');
+  store.messageObjectIdentity.set(identity, token);
+  return token;
 }
 
 /**
@@ -80,19 +95,20 @@ export function releaseContinuationAttempt(
 
 /**
  * Open a new continuation epoch for a real external user message.
- * Idempotent per (sessionID, messageID): a second observe of the same message
- * (e.g. another hook instance) is a no-op and does not rearm again.
- * Returns true when this call cleared attempt state.
+ * Idempotent per (sessionID, identity): string message IDs or same-process
+ * object identity (WeakMap→symbol). A second observe of the same identity
+ * does not rearm again. Returns true when this call cleared attempt state.
  */
 export function rearmContinuationForUserMessage(
   sessionID: string,
-  messageID: string,
+  identity: string | object,
 ): boolean {
   const store = getStore();
-  if (store.lastRearmMessageID.get(sessionID) === messageID) {
+  const resolved = resolveRearmIdentity(identity);
+  if (store.lastRearmIdentity.get(sessionID) === resolved) {
     return false;
   }
-  store.lastRearmMessageID.set(sessionID, messageID);
+  store.lastRearmIdentity.set(sessionID, resolved);
   store.attempts.delete(sessionID);
   return true;
 }
@@ -104,7 +120,7 @@ export function rearmContinuationForUserMessage(
 export function clearContinuationAttempt(sessionID: string): void {
   const store = getStore();
   store.attempts.delete(sessionID);
-  store.lastRearmMessageID.delete(sessionID);
+  store.lastRearmIdentity.delete(sessionID);
 }
 
 export function hasConsumedContinuationAttempt(sessionID: string): boolean {
@@ -115,5 +131,6 @@ export function hasConsumedContinuationAttempt(sessionID: string): boolean {
 export function resetContinuationAttemptGateForTests(): void {
   const store = getStore();
   store.attempts.clear();
-  store.lastRearmMessageID.clear();
+  store.lastRearmIdentity.clear();
+  // WeakMap entries are not enumerable; leave for GC. Tests use fresh objects.
 }

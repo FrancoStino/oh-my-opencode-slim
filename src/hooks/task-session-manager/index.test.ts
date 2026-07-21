@@ -4438,6 +4438,213 @@ describe('task-session-manager hook', () => {
     expect(promptAsync).toHaveBeenCalledTimes(2);
   });
 
+  test('output.message.id rearms when input.messageID is missing', async () => {
+    const promptAsync = mock(async () => ({}));
+    const { hook } = createHook({
+      idleReconcileDelayMs: 0,
+      sessionClient: {
+        todo: mock(async () => ({ data: [{ status: 'pending' }] })),
+        children: mock(async () => ({ data: [] })),
+        status: mock(async () => ({ data: {} })),
+        promptAsync,
+      },
+    });
+
+    await hook.event({
+      event: { type: 'session.idle', properties: { sessionID: 'parent-1' } },
+    });
+    await flushContinuation();
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+
+    hook.observeChatMessage(
+      { sessionID: 'parent-1' },
+      {
+        message: {
+          id: 'msg-output-id-only',
+          role: 'user',
+          sessionID: 'parent-1',
+        },
+        parts: [{ type: 'text', text: 'continue' }],
+      },
+    );
+    await hook.event({
+      event: { type: 'session.idle', properties: { sessionID: 'parent-1' } },
+    });
+    await flushContinuation();
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+  });
+
+  test('ID-less output.message object identity rearms once', async () => {
+    const promptAsync = mock(async () => ({}));
+    const { hook } = createHook({
+      idleReconcileDelayMs: 0,
+      sessionClient: {
+        todo: mock(async () => ({ data: [{ status: 'pending' }] })),
+        children: mock(async () => ({ data: [] })),
+        status: mock(async () => ({ data: {} })),
+        promptAsync,
+      },
+    });
+    const message = { role: 'user', sessionID: 'parent-1' };
+
+    await hook.event({
+      event: { type: 'session.idle', properties: { sessionID: 'parent-1' } },
+    });
+    await flushContinuation();
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+
+    hook.observeChatMessage(
+      { sessionID: 'parent-1' },
+      { message, parts: [{ type: 'text', text: 'continue' }] },
+    );
+    await hook.event({
+      event: { type: 'session.idle', properties: { sessionID: 'parent-1' } },
+    });
+    await flushContinuation();
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+
+    // Same object again must not open another epoch.
+    hook.observeChatMessage(
+      { sessionID: 'parent-1' },
+      { message, parts: [{ type: 'text', text: 'continue' }] },
+    );
+    await hook.event({
+      event: { type: 'session.idle', properties: { sessionID: 'parent-1' } },
+    });
+    await flushContinuation();
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+  });
+
+  test('two hooks share ID-less output.message object identity', async () => {
+    const promptAsync = mock(async () => ({}));
+    const sessionClient = {
+      todo: mock(async () => ({ data: [{ status: 'pending' }] })),
+      children: mock(async () => ({ data: [] })),
+      status: mock(async () => ({ data: {} })),
+      promptAsync,
+    };
+    const makeHook = () =>
+      createTaskSessionManagerHook(
+        {
+          client: { session: sessionClient },
+          directory: '/tmp',
+          worktree: '/tmp',
+        } as never,
+        {
+          maxSessionsPerAgent: 2,
+          continueOnIdle: true,
+          idleReconcileDelayMs: 0,
+          shouldManageSession: () => true,
+        },
+      );
+    const hookA = makeHook();
+    const hookB = makeHook();
+    const message = { role: 'user', sessionID: 'parent-1' };
+    const output = {
+      message,
+      parts: [{ type: 'text', text: 'continue' }],
+    };
+
+    await hookA.event({
+      event: { type: 'session.idle', properties: { sessionID: 'parent-1' } },
+    });
+    await flushContinuation();
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+
+    hookA.observeChatMessage({ sessionID: 'parent-1' }, output);
+    await hookA.event({
+      event: { type: 'session.idle', properties: { sessionID: 'parent-1' } },
+    });
+    await flushContinuation();
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+
+    hookB.observeChatMessage({ sessionID: 'parent-1' }, output);
+    await hookB.event({
+      event: { type: 'session.idle', properties: { sessionID: 'parent-1' } },
+    });
+    await flushContinuation();
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+  });
+
+  test('distinct ID-less message objects each open a new epoch', async () => {
+    const promptAsync = mock(async () => ({}));
+    const { hook } = createHook({
+      idleReconcileDelayMs: 0,
+      sessionClient: {
+        todo: mock(async () => ({ data: [{ status: 'pending' }] })),
+        children: mock(async () => ({ data: [] })),
+        status: mock(async () => ({ data: {} })),
+        promptAsync,
+      },
+    });
+
+    await hook.event({
+      event: { type: 'session.idle', properties: { sessionID: 'parent-1' } },
+    });
+    await flushContinuation();
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+
+    const text = 'identical text must not dedupe distinct objects';
+    hook.observeChatMessage(
+      { sessionID: 'parent-1' },
+      {
+        message: { role: 'user', sessionID: 'parent-1' },
+        parts: [{ type: 'text', text }],
+      },
+    );
+    await hook.event({
+      event: { type: 'session.idle', properties: { sessionID: 'parent-1' } },
+    });
+    await flushContinuation();
+    expect(promptAsync).toHaveBeenCalledTimes(2);
+
+    hook.observeChatMessage(
+      { sessionID: 'parent-1' },
+      {
+        message: { role: 'user', sessionID: 'parent-1' },
+        parts: [{ type: 'text', text }],
+      },
+    );
+    await hook.event({
+      event: { type: 'session.idle', properties: { sessionID: 'parent-1' } },
+    });
+    await flushContinuation();
+    expect(promptAsync).toHaveBeenCalledTimes(3);
+  });
+
+  test('missing id and output.message fails closed without rearm', async () => {
+    const promptAsync = mock(async () => ({}));
+    const { hook } = createHook({
+      idleReconcileDelayMs: 0,
+      sessionClient: {
+        todo: mock(async () => ({ data: [{ status: 'pending' }] })),
+        children: mock(async () => ({ data: [] })),
+        status: mock(async () => ({ data: {} })),
+        promptAsync,
+      },
+    });
+
+    await hook.event({
+      event: { type: 'session.idle', properties: { sessionID: 'parent-1' } },
+    });
+    await flushContinuation();
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+
+    // sessionID only on input; no messageID and no output.message object.
+    hook.observeChatMessage(
+      {
+        sessionID: 'parent-1',
+        parts: [{ type: 'text', text: 'continue' }],
+      },
+      { parts: [{ type: 'text', text: 'continue' }] },
+    );
+    await hook.event({
+      event: { type: 'session.idle', properties: { sessionID: 'parent-1' } },
+    });
+    await flushContinuation();
+    expect(promptAsync).toHaveBeenCalledTimes(1);
+  });
+
   test('same user message observed by two hooks rearms only one new epoch', async () => {
     const promptAsync = mock(async () => ({}));
     const sessionClient = {
