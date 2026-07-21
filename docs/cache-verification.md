@@ -45,12 +45,23 @@ the Prompt Cache Safety section in `AGENTS.md` for the authoring rules.
 ## Runtime cache monitoring
 
 `src/hooks/cache-monitor/` observes `message.updated` events and the
-provider-reported `tokens.cache.read` / `tokens.cache.write` counters. When a
-session that previously hit the cache reports zero cache-read tokens on a
-sizeable request, it logs a `[cache-monitor] possible prompt-cache bust`
-warning (once per bust streak) to the plugin log. Providers that never report
-cache telemetry produce no warnings. This is the field safety net for
-provider-side behavior no offline test can model.
+provider-reported `tokens.cache.read` / `tokens.cache.write` counters. It
+logs two warning shapes (observation only, to the plugin log):
+
+- `possible prompt-cache bust` — a session that previously hit the cache
+  reports zero cache-read tokens on a sizeable request (once per bust
+  streak). The signature of a mid-session prompt-prefix change.
+- `never hit the provider cache` — a session reports zero cached tokens on
+  every sizeable request from its first turn, past both a consecutive-request
+  and a cumulative-uncached-input threshold (once per session). The signature
+  of a prefix that changes on *every* request — how the v2.2.5
+  checkpoint-board regression looked in the field. OpenCode coalesces missing
+  provider telemetry to zeros, so a cache-less provider is indistinguishable
+  from this; the thresholds and hedged wording keep that ambiguity from
+  becoming noise, and modest sessions on cache-less providers stay silent.
+
+This is the field safety net for provider-side behavior no offline test can
+model.
 
 ## Prerequisites
 

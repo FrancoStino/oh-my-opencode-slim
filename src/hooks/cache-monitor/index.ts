@@ -25,11 +25,30 @@ const MIN_INPUT_TOKENS_FOR_WARNING = 2048;
 const MAX_TRACKED_SESSIONS = 256;
 const MAX_TRACKED_MESSAGES_PER_SESSION = 512;
 
+/**
+ * A session busted from its very first request never trips the
+ * `everReportedCache` warning below — that was the field signature of the
+ * v2.2.5 checkpoint board regression, where every request re-paid full
+ * input from turn one and the monitor stayed silent.
+ *
+ * OpenCode coalesces missing provider cache telemetry to zeros, so explicit
+ * zeros cannot distinguish "prefix changes every request" from "provider
+ * has no prompt cache". Both thresholds must be met before warning — at
+ * least this many consecutive sizeable zero-cache requests AND this much
+ * cumulative uncached input — so the warning only fires where a working
+ * cache would have saved a large amount, and the wording stays hedged.
+ */
+const NEVER_CACHED_STREAK_FOR_WARNING = 3;
+const NEVER_CACHED_INPUT_TOKENS_FOR_WARNING = 100_000;
+
 interface SessionCacheState {
   completedRequests: number;
   everReportedCache: boolean;
   lastCacheRead: number;
   warnedSinceLastHit: boolean;
+  neverCachedStreak: number;
+  neverCachedInputTokens: number;
+  neverCachedWarned: boolean;
   processedMessageIDs: Set<string>;
 }
 
@@ -118,6 +137,9 @@ export function createCacheMonitorHook(options: CacheMonitorOptions = {}) {
       everReportedCache: false,
       lastCacheRead: 0,
       warnedSinceLastHit: false,
+      neverCachedStreak: 0,
+      neverCachedInputTokens: 0,
+      neverCachedWarned: false,
       processedMessageIDs: new Set(),
     };
     sessions.set(sessionID, state);
@@ -150,6 +172,39 @@ export function createCacheMonitorHook(options: CacheMonitorOptions = {}) {
           previousCacheRead: state.lastCacheRead,
         },
       );
+    }
+
+    // A session that never serves a single cached token, over enough
+    // sizeable requests that a working cache would have saved a large
+    // amount, is busted from turn one — it never arms the
+    // everReportedCache warning above. Small requests neither extend nor
+    // reset the streak: they sit under provider minimum-prefix thresholds
+    // and legitimately miss.
+    if (!state.everReportedCache) {
+      if (
+        message.cacheRead === 0 &&
+        message.cacheWrite === 0 &&
+        message.inputTokens >= MIN_INPUT_TOKENS_FOR_WARNING
+      ) {
+        state.neverCachedStreak += 1;
+        state.neverCachedInputTokens += message.inputTokens;
+      }
+      if (
+        !state.neverCachedWarned &&
+        state.neverCachedStreak >= NEVER_CACHED_STREAK_FOR_WARNING &&
+        state.neverCachedInputTokens >= NEVER_CACHED_INPUT_TOKENS_FOR_WARNING
+      ) {
+        state.neverCachedWarned = true;
+        logger(
+          '[cache-monitor] session has never hit the provider cache: every sizeable request reported 0 cache-read tokens. If this provider supports prompt caching, the prompt prefix is likely changing on every request; if not, this session is re-paying full input each turn — see docs/cache-verification.md.',
+          {
+            sessionID: message.sessionID,
+            requestNumber: state.completedRequests,
+            consecutiveUncachedRequests: state.neverCachedStreak,
+            uncachedInputTokens: state.neverCachedInputTokens,
+          },
+        );
+      }
     }
 
     if (message.cacheRead > 0) state.warnedSinceLastHit = false;
