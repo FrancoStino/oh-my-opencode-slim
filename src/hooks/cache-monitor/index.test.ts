@@ -100,9 +100,12 @@ describe('createCacheMonitorHook', () => {
     expect(warnings).toHaveLength(2);
   });
 
-  test('stays silent for providers that never report cache tokens', async () => {
+  test('stays silent for modest sessions that never report cache tokens', async () => {
     const { hook, warnings } = createHarness();
 
+    // Cache-less providers are indistinguishable from busted sessions
+    // (OpenCode coalesces missing telemetry to zeros); below the cumulative
+    // input threshold the monitor must give them the benefit of the doubt.
     for (const id of ['c1', 'c2', 'c3']) {
       await hook.event(
         assistantMessageEvent({ messageID: id, input: 20000, cacheRead: 0 }),
@@ -110,6 +113,59 @@ describe('createCacheMonitorHook', () => {
     }
 
     expect(warnings).toHaveLength(0);
+  });
+
+  test('warns once for a large session that never hits the cache', async () => {
+    const { hook, warnings } = createHarness();
+
+    // The v2.2.5 checkpoint-board signature: consecutive ~146K-input
+    // requests, zero cache reads from the very first turn.
+    for (const id of ['g1', 'g2']) {
+      await hook.event(
+        assistantMessageEvent({ messageID: id, input: 146000, cacheRead: 0 }),
+      );
+    }
+    expect(warnings).toHaveLength(0);
+
+    await hook.event(
+      assistantMessageEvent({ messageID: 'g3', input: 146000, cacheRead: 0 }),
+    );
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain('never hit the provider cache');
+    expect(warnings[0].data).toMatchObject({
+      sessionID: 'ses_monitor',
+      consecutiveUncachedRequests: 3,
+      uncachedInputTokens: 438000,
+    });
+
+    // Once per session, even as the streak keeps growing.
+    await hook.event(
+      assistantMessageEvent({ messageID: 'g4', input: 146000, cacheRead: 0 }),
+    );
+    expect(warnings).toHaveLength(1);
+  });
+
+  test('any reported cache activity disarms the never-cached warning', async () => {
+    const { hook, warnings } = createHarness();
+
+    // An Anthropic-style first request reports a cache write; later misses
+    // are the everReportedCache bust signature, not the never-cached one.
+    await hook.event(
+      assistantMessageEvent({
+        messageID: 'h1',
+        input: 146000,
+        cacheRead: 0,
+        cacheWrite: 140000,
+      }),
+    );
+    for (const id of ['h2', 'h3', 'h4']) {
+      await hook.event(
+        assistantMessageEvent({ messageID: id, input: 146000, cacheRead: 0 }),
+      );
+    }
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain('prompt-cache bust');
   });
 
   test('stays silent on the first request and on tiny prompts', async () => {
