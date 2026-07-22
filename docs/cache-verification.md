@@ -15,6 +15,10 @@ and should not be conflated.
   cache guarantee.
 - **Runtime cache monitoring** watches provider-reported cache telemetry
   during real sessions and logs a warning when a cache bust signature appears.
+- **Live cache smoke** (`bun run cache:smoke`) is a one-command operational
+  probe: it starts a real `opencode serve` with your normal config/auth/plugin,
+  runs short scripted conversations, and reports per-request provider cache
+  telemetry with a verdict.
 
 ## Continuous cache-safety tests (CI)
 
@@ -41,6 +45,42 @@ mistakes that have not been made before:
 
 All hook injections must go through `src/hooks/cache-safe-injection.ts`; see
 the Prompt Cache Safety section in `AGENTS.md` for the authoring rules.
+
+## Live cache smoke (`bun run cache:smoke`)
+
+Answers "is provider prompt caching working in my setup right now?" at the
+cost of a handful of real requests. It starts an isolated `opencode serve`
+(your global config, auth, and plugin apply), runs scripted scenarios in
+fresh sessions, then reads `tokens.cache.read/write` from the stored
+assistant messages — including the subagent child sessions that delegation
+scenarios spawn.
+
+Each scenario is designed to fire specific plugin payload machinery:
+
+| Scenario | Triggers | Default |
+|---|---|---|
+| `plain` | phase reminder, skills filter, system transform | ✅ |
+| `tools` | tool-result growth across steps | ✅ |
+| `nudge` | post-file-tool nudge injection, phase-reminder equilibrium | extensive |
+| `todos` | todowrite churn (create/update/complete across turns) | extensive |
+| `long` | sliding cache breakpoints over a six-turn history | extensive |
+| `board` | job-board trailing injection, injected completion, reconcile | extensive |
+| `agents` | repeated delegation, task-session reuse, subagent caching | extensive |
+
+```bash
+bun run cache:smoke                          # plain + tools (fast, cheap)
+bun run cache:smoke -- --scenario extensive  # full matrix, several minutes
+bun run cache:smoke -- --scenario board,agents
+bun run cache:smoke -- --provider anthropic --model claude-sonnet-5
+bun run cache:smoke -- --server http://127.0.0.1:4096   # reuse a running server
+```
+
+A request is flagged **SUSPECT** when it is not the first request of its
+session, its input is ≥4096 tokens (above every provider's minimum cacheable
+prefix), and it read zero cached tokens. Exit codes: `0` caching works, `1`
+bust detected (any suspect request), `2` inconclusive (provider reported no
+cache telemetry), `3` setup error. Providers with read-only telemetry
+(OpenAI-style `cached_tokens`) show `cache-write 0` — normal, not a failure.
 
 ## Runtime cache monitoring
 

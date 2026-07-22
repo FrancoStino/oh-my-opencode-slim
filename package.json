@@ -62,6 +62,7 @@
     "verify:release": "bun run scripts/verify-release-artifact.ts",
     "verify:host-smoke": "bun run scripts/verify-opencode-host-smoke.ts",
     "verify:cache-stability": "bun run scripts/verify-opencode-cache-stability.ts",
+    "cache:smoke": "bun run scripts/cache-smoke.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "lint": "biome lint .",
