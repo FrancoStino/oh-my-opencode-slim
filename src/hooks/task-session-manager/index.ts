@@ -47,9 +47,9 @@ export function createTaskSessionManagerHook(
     readContextMinLines?: number;
     readContextMaxFiles?: number;
     /**
-     * When true (default), idle orchestrator sessions with incomplete todos may
-     * receive one automatic continuation promptAsync. Set false to keep idle
-     * reconciliation without continuation SDK calls.
+     * Beta opt-in. When true, idle orchestrator sessions with incomplete todos
+     * may receive one automatic continuation promptAsync. Disabled by default;
+     * idle reconciliation continues without continuation SDK calls.
      */
     continueOnIdle?: boolean;
     backgroundJobBoard?: BackgroundJobStore;
@@ -68,7 +68,7 @@ export function createTaskSessionManagerHook(
     idleReconcileDelayMs?: number;
   },
 ) {
-  const continueOnIdle = options.continueOnIdle !== false;
+  const continueOnIdle = options.continueOnIdle === true;
   const backgroundJobBoard =
     options.backgroundJobBoard ??
     new BackgroundJobBoard({

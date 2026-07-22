@@ -321,22 +321,22 @@ multiplexer panes attached while the parent orchestrator continues scheduling.
 
 ### Incomplete-todo continuation nudge
 
-Automatic incomplete-todo continuation is **enabled by default**. Idle
-reconciliation and background-job orchestration always run; set
-`continueOnIdle` to `false` to keep those without hidden continuation prompts:
+Automatic incomplete-todo continuation is an **opt-in beta feature**. Idle
+reconciliation and background-job orchestration always run without it. Enable
+the beta only when you want hidden continuation prompts:
 
 ```jsonc
 {
   "backgroundJobs": {
-    "continueOnIdle": false
+    "continueOnIdle": true
   }
 }
 ```
 
-When `backgroundJobs.continueOnIdle` is `true` (the default), after an
-orchestrator session becomes idle the plugin may send **at most one** internal,
-delayed continuation prompt when OpenCode reports incomplete todos. That limit
-is per session between real external user messages (text/file/image).
+When `backgroundJobs.continueOnIdle` is `true`, after an orchestrator session
+becomes idle the plugin may send **at most one** internal, delayed continuation
+prompt when OpenCode reports incomplete todos. That limit is per session between
+real external user messages (text/file/image).
 Synthetic/internal inputs and subsequent idle/busy events do not rearm it. A
 real user message rearms the one-shot nudge once per message identity
 (`chat.message` `messageID` / `message.id`), shared across hook instances in the

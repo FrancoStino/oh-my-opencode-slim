@@ -42,7 +42,10 @@ function createHook(options?: {
   readContextMaxFiles?: number;
   strategy?: 'latest' | 'checkpoint-compatible';
   maxRetainedSnapshots?: number;
-  /** Matches production default true; set false to exercise opt-out. */
+  /**
+   * Keeps continuation behavior tests focused on the opt-in beta path;
+   * production defaults are exercised by the direct factory test below.
+   */
   continueOnIdle?: boolean;
   backgroundJobBoard?: BackgroundJobBoard;
   sessionStatus?: unknown;
@@ -3471,7 +3474,7 @@ describe('task-session-manager hook', () => {
     ).toHaveLength(1);
   });
 
-  test('defaults continueOnIdle on: continuation SDK calls run', async () => {
+  test('defaults continueOnIdle off: continuation SDK calls do not run', async () => {
     const promptAsync = mock(async () => ({}));
     const todo = mock(async () => ({ data: [{ status: 'in_progress' }] }));
     const hook = createTaskSessionManagerHook(
@@ -3500,8 +3503,8 @@ describe('task-session-manager hook', () => {
     });
     await flushContinuation();
 
-    expect(todo).toHaveBeenCalled();
-    expect(promptAsync).toHaveBeenCalledTimes(1);
+    expect(todo).not.toHaveBeenCalled();
+    expect(promptAsync).not.toHaveBeenCalled();
   });
 
   test('explicit continueOnIdle false reconciles parent terminal job without continuation', async () => {
@@ -3553,6 +3556,7 @@ describe('task-session-manager hook', () => {
   test('nudges once for incomplete todos when parent and children are inactive', async () => {
     const promptAsync = mock(async () => ({}));
     const { hook } = createHook({
+      continueOnIdle: true,
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'in_progress' }] })),
