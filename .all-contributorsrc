@@ -740,6 +740,15 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "kaze-gif",
+      "name": "かぜ",
+      "avatar_url": "https://avatars.githubusercontent.com/u/114116466?v=4",
+      "profile": "https://github.com/kaze-gif",
+      "contributions": [
+        "code"
+      ]
     }
   ],
   "commitConvention": "angular"
