@@ -28,6 +28,9 @@
  *                       (default: plain,tools — the cheap probe).
  *   --turn-timeout-ms N Per-turn timeout (default 300000).
  *   --keep-sessions     Don't delete the probe sessions afterwards.
+ *   --board-strategy S  Pin backgroundJobs.strategy ("latest" or
+ *                       "checkpoint-compatible") via a scratch project
+ *                       config — for A/B-ing issue #874. Spawned server only.
  *
  * Exit codes: 0 caching works · 1 bust detected · 2 inconclusive (provider
  * reported no cache telemetry) · 3 setup/runtime error.
@@ -39,7 +42,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -52,6 +55,8 @@ interface Args {
   scenarios: string[];
   turnTimeoutMs: number;
   keepSessions: boolean;
+  /** Force backgroundJobs.strategy via a scratch project config (issue #874 A/B). */
+  boardStrategy?: 'latest' | 'checkpoint-compatible';
 }
 
 interface Turn {
@@ -81,7 +86,7 @@ interface SessionReport {
   rows: RequestRow[];
 }
 
-type Verdict = 'ok' | 'bust' | 'inconclusive';
+type Verdict = 'ok' | 'plateau' | 'bust' | 'inconclusive';
 
 /**
  * Requests at or above this input size with zero cache reads (after the
@@ -89,6 +94,23 @@ type Verdict = 'ok' | 'bust' | 'inconclusive';
  * every provider's minimum cacheable prefix (OpenAI 1024, Anthropic ≤4096).
  */
 const SUSPECT_INPUT_THRESHOLD = 4096;
+
+/**
+ * Cache-read plateau detection (issue #874 signature): the reusable prefix
+ * stops growing — `cache-read` stays frozen at the same nonzero value for
+ * consecutive requests while sizeable uncached input keeps accumulating.
+ * Distinct from a bust (reads never drop to zero). Small frozen streaks are
+ * normal (providers round reads to ~128-token boundaries), so both
+ * thresholds must be met.
+ */
+const PLATEAU_STREAK_THRESHOLD = 3;
+const PLATEAU_INPUT_THRESHOLD = 6144;
+
+interface PlateauFinding {
+  frozenAt: number;
+  requests: number;
+  accumulatedInput: number;
+}
 
 const NO_TOOLS = 'Do not use any tools.';
 
@@ -180,6 +202,42 @@ const SCENARIOS: Scenario[] = [
       },
       {
         text: `Reply with exactly "ack board done" and nothing else. ${NO_TOOLS}`,
+      },
+    ],
+  },
+  {
+    name: 'board-churn',
+    description:
+      'many turns while background launches churn the job board between requests (issue #874 workload)',
+    triggers:
+      'board strip/re-append across consecutive requests; detects cache-read plateaus where the reusable prefix stops growing',
+    turns: (nonce) => [
+      {
+        text: `Cache smoke probe ${nonce}. Launch exactly one background @explorer task that lists the files in the current directory. Do not wait — reply immediately with exactly "ack churn 1".`,
+        pauseAfterMs: 20_000,
+      },
+      {
+        text: `Reply with exactly "ack churn 2" and nothing else. ${NO_TOOLS}`,
+      },
+      {
+        text: 'Launch exactly one background @explorer task that counts the lines in package.json. Do not wait — reply immediately with exactly "ack churn 3".',
+        pauseAfterMs: 20_000,
+      },
+      {
+        text: `Reply with exactly "ack churn 4" and nothing else. ${NO_TOOLS}`,
+      },
+      {
+        text: 'Launch exactly one background @explorer task that reports the largest file in the current directory. Do not wait — reply immediately with exactly "ack churn 5".',
+        pauseAfterMs: 20_000,
+      },
+      {
+        text: 'Reconcile all completed background tasks now, then reply with exactly "ack reconciled".',
+      },
+      {
+        text: `Reply with exactly "ack churn 7" and nothing else. ${NO_TOOLS}`,
+      },
+      {
+        text: `Reply with exactly "ack churn 8" and nothing else. ${NO_TOOLS}`,
       },
     ],
   },
@@ -286,12 +344,25 @@ function parseArgs(argv: string[]): Args {
       case '--keep-sessions':
         args.keepSessions = true;
         break;
+      case '--board-strategy': {
+        const strategy = value();
+        if (strategy !== 'latest' && strategy !== 'checkpoint-compatible') {
+          fail('--board-strategy must be "latest" or "checkpoint-compatible"');
+        }
+        args.boardStrategy = strategy;
+        break;
+      }
       default:
         fail(`unknown flag ${flag}`);
     }
   }
   if (!!args.provider !== !!args.model) {
     fail('--provider and --model must be given together');
+  }
+  if (args.boardStrategy && args.server) {
+    fail(
+      '--board-strategy requires a spawned server (it writes a scratch project config); drop --server',
+    );
   }
   if (!Number.isFinite(args.turnTimeoutMs) || args.turnTimeoutMs <= 0) {
     fail('--turn-timeout-ms must be a positive number');
@@ -423,6 +494,39 @@ function suspectRows(rows: RequestRow[]): RequestRow[] {
     );
 }
 
+/**
+ * Issue #874 signature: cache-read frozen at the same nonzero value across
+ * consecutive requests while sizeable uncached input accumulates — the
+ * reusable prefix has stopped growing even though nothing reads zero.
+ */
+function findPlateau(rows: RequestRow[]): PlateauFinding | undefined {
+  let worst: PlateauFinding | undefined;
+  let streak = 1;
+  let accumulatedInput = 0;
+  for (let i = 1; i < rows.length; i += 1) {
+    const row = rows[i];
+    if (row.cacheRead > 0 && row.cacheRead === rows[i - 1].cacheRead) {
+      streak += 1;
+      accumulatedInput += row.input;
+      if (
+        streak >= PLATEAU_STREAK_THRESHOLD &&
+        accumulatedInput >= PLATEAU_INPUT_THRESHOLD &&
+        (!worst || accumulatedInput > worst.accumulatedInput)
+      ) {
+        worst = {
+          frozenAt: row.cacheRead,
+          requests: streak,
+          accumulatedInput,
+        };
+      }
+    } else {
+      streak = 1;
+      accumulatedInput = 0;
+    }
+  }
+  return worst;
+}
+
 function judge(reports: SessionReport[]): Verdict {
   const allRows = reports.flatMap((report) => report.rows);
   if (allRows.length < 2) return 'inconclusive';
@@ -431,7 +535,9 @@ function judge(reports: SessionReport[]): Verdict {
   );
   if (!anyTelemetry) return 'inconclusive';
   const suspects = reports.flatMap((report) => suspectRows(report.rows));
-  return suspects.length > 0 ? 'bust' : 'ok';
+  if (suspects.length > 0) return 'bust';
+  const plateaued = reports.some((report) => findPlateau(report.rows));
+  return plateaued ? 'plateau' : 'ok';
 }
 
 function coverage(rows: RequestRow[]): string {
@@ -468,6 +574,12 @@ function printSessionTable(report: SessionReport): void {
   console.log(
     `    cache-read coverage after first request: ${coverage(report.rows)}`,
   );
+  const plateau = findPlateau(report.rows);
+  if (plateau) {
+    console.log(
+      `    ⚠ plateau: cache-read frozen at ${plateau.frozenAt} for ${plateau.requests} consecutive requests while ${plateau.accumulatedInput} uncached input tokens accumulated`,
+    );
+  }
 }
 
 function printScenarioReport(
@@ -482,6 +594,8 @@ function printScenarioReport(
   }
   const labels: Record<Verdict, string> = {
     ok: '✅ every sizeable follow-up request read the provider cache',
+    plateau:
+      '⚠️ cache-read plateaued — reads never dropped to zero, but the reusable prefix stopped growing while input accumulated (issue #874 signature)',
     bust: '❌ SUSPECT requests above read 0 cached tokens — the prompt prefix changed between requests',
     inconclusive:
       '⚠️ provider reported no cache telemetry — cannot verify (provider may not support or report caching)',
@@ -571,6 +685,27 @@ async function main(): Promise<void> {
       path.join(scratch, 'package.json'),
       `${JSON.stringify({ name: 'cache-smoke-fixture', version: '0.0.0' }, null, 2)}\n`,
     );
+    if (args.boardStrategy) {
+      // Project-local plugin config overrides the user config, pinning the
+      // board strategy for this run regardless of global settings.
+      mkdirSync(path.join(scratch, '.opencode'), { recursive: true });
+      writeFileSync(
+        path.join(scratch, '.opencode', 'oh-my-opencode-slim.json'),
+        `${JSON.stringify(
+          {
+            backgroundJobs: {
+              strategy: args.boardStrategy,
+              maxRetainedSnapshots: 20,
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      console.log(
+        `board strategy pinned via project config: ${args.boardStrategy}`,
+      );
+    }
     const port = await getFreePort();
     base = `http://127.0.0.1:${port}`;
     console.log(`starting opencode serve on ${base} (cwd: ${scratch})`);
@@ -616,6 +751,11 @@ async function main(): Promise<void> {
     if (verdicts.includes('bust')) {
       console.log(
         'RESULT: ❌ cache bust detected. Cross-check the plugin build (bun run build), then use docs/cache-verification.md to localize the changing prefix byte.',
+      );
+      process.exitCode = 1;
+    } else if (verdicts.includes('plateau')) {
+      console.log(
+        'RESULT: ⚠️ cache-read plateau detected — the reusable prefix stopped growing (issue #874). Compare board strategies with --board-strategy latest vs checkpoint-compatible.',
       );
       process.exitCode = 1;
     } else if (verdicts.every((verdict) => verdict === 'inconclusive')) {

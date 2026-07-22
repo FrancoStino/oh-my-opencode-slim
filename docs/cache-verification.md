@@ -65,6 +65,8 @@ Each scenario is designed to fire specific plugin payload machinery:
 | `todos` | todowrite churn (create/update/complete across turns) | extensive |
 | `long` | sliding cache breakpoints over a six-turn history | extensive |
 | `board` | job-board trailing injection, injected completion, reconcile | extensive |
+| `board-churn` | board strip/re-append across many turns; plateau detection (issue #874) | extensive |
+| `running-lane` | running task tool_result mid-history across consecutive requests (PR #871) | extensive |
 | `agents` | repeated delegation, task-session reuse, subagent caching | extensive |
 
 ```bash
@@ -73,20 +75,32 @@ bun run cache:smoke -- --scenario extensive  # full matrix, several minutes
 bun run cache:smoke -- --scenario board,agents
 bun run cache:smoke -- --provider anthropic --model claude-sonnet-5
 bun run cache:smoke -- --server http://127.0.0.1:4096   # reuse a running server
+
+# Issue #874 A/B: pin the board strategy via a scratch project config
+bun run cache:smoke -- --scenario board-churn --board-strategy latest
+bun run cache:smoke -- --scenario board-churn --board-strategy checkpoint-compatible
 ```
 
-A request is flagged **SUSPECT** when it is not the first request of its
-session, its input is ≥4096 tokens (above every provider's minimum cacheable
-prefix), and it read zero cached tokens. Exit codes: `0` caching works, `1`
-bust detected (any suspect request), `2` inconclusive (provider reported no
-cache telemetry), `3` setup error. Providers with read-only telemetry
-(OpenAI-style `cached_tokens`) show `cache-write 0` — normal, not a failure.
+Two failure signatures are detected, plus an inconclusive case:
+
+- A request is flagged **SUSPECT** when it is not the first request of its
+  session, its input is ≥4096 tokens (above every provider's minimum
+  cacheable prefix), and it read zero cached tokens — the bust signature.
+- A session is flagged **plateau** when `cache-read` stays frozen at the
+  same nonzero value for 3+ consecutive requests while ≥6144 uncached input
+  tokens accumulate — the issue #874 signature, where the reusable prefix
+  stops growing even though nothing reads zero.
+
+Exit codes: `0` caching works, `1` bust or plateau detected, `2` inconclusive
+(provider reported no cache telemetry), `3` setup error. Providers with
+read-only telemetry (OpenAI-style `cached_tokens`) show `cache-write 0` —
+normal, not a failure.
 
 ## Runtime cache monitoring
 
 `src/hooks/cache-monitor/` observes `message.updated` events and the
 provider-reported `tokens.cache.read` / `tokens.cache.write` counters. It
-logs two warning shapes (observation only, to the plugin log):
+logs three warning shapes (observation only, to the plugin log):
 
 - `possible prompt-cache bust` — a session that previously hit the cache
   reports zero cache-read tokens on a sizeable request (once per bust
@@ -99,6 +113,12 @@ logs two warning shapes (observation only, to the plugin log):
   provider telemetry to zeros, so a cache-less provider is indistinguishable
   from this; the thresholds and hedged wording keep that ambiguity from
   becoming noise, and modest sessions on cache-less providers stay silent.
+- `cache-read plateau` — reads frozen at the same nonzero value for 4+
+  consecutive requests while ≥50K uncached input tokens accumulate (once per
+  plateau; re-arms when the read value changes). The issue #874 signature:
+  the reusable prefix has stopped growing even though nothing reads zero.
+  The warning suggests trying `backgroundJobs.strategy`
+  `"checkpoint-compatible"`.
 
 This is the field safety net for provider-side behavior no offline test can
 model.

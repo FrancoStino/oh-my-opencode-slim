@@ -41,6 +41,17 @@ const MAX_TRACKED_MESSAGES_PER_SESSION = 512;
 const NEVER_CACHED_STREAK_FOR_WARNING = 3;
 const NEVER_CACHED_INPUT_TOKENS_FOR_WARNING = 100_000;
 
+/**
+ * Cache-read plateau (issue #874 signature): `cache.read` stays frozen at
+ * the same nonzero value across consecutive requests while sizeable uncached
+ * input accumulates — the provider's reusable prefix has stopped growing
+ * even though nothing reads zero. Providers round reads to coarse
+ * boundaries, so short frozen streaks with small inputs are normal; both
+ * thresholds must be met before warning.
+ */
+const PLATEAU_STREAK_FOR_WARNING = 4;
+const PLATEAU_INPUT_TOKENS_FOR_WARNING = 50_000;
+
 interface SessionCacheState {
   completedRequests: number;
   everReportedCache: boolean;
@@ -49,6 +60,9 @@ interface SessionCacheState {
   neverCachedStreak: number;
   neverCachedInputTokens: number;
   neverCachedWarned: boolean;
+  plateauStreak: number;
+  plateauInputTokens: number;
+  plateauWarned: boolean;
   processedMessageIDs: Set<string>;
 }
 
@@ -140,6 +154,9 @@ export function createCacheMonitorHook(options: CacheMonitorOptions = {}) {
       neverCachedStreak: 0,
       neverCachedInputTokens: 0,
       neverCachedWarned: false,
+      plateauStreak: 0,
+      plateauInputTokens: 0,
+      plateauWarned: false,
       processedMessageIDs: new Set(),
     };
     sessions.set(sessionID, state);
@@ -205,6 +222,36 @@ export function createCacheMonitorHook(options: CacheMonitorOptions = {}) {
           },
         );
       }
+    }
+
+    // Cache-read plateau (issue #874): reads frozen at the same nonzero
+    // boundary while uncached input keeps accumulating — the reusable
+    // prefix has stopped growing. Reads changing (any direction) end the
+    // streak and re-arm the warning.
+    if (message.cacheRead > 0 && message.cacheRead === state.lastCacheRead) {
+      state.plateauStreak += 1;
+      state.plateauInputTokens += message.inputTokens;
+      if (
+        !state.plateauWarned &&
+        state.plateauStreak >= PLATEAU_STREAK_FOR_WARNING &&
+        state.plateauInputTokens >= PLATEAU_INPUT_TOKENS_FOR_WARNING
+      ) {
+        state.plateauWarned = true;
+        logger(
+          '[cache-monitor] cache-read plateau: the provider is reusing the same frozen prefix while sizeable uncached input accumulates — the reusable prefix has stopped growing (issue #874 signature). Consider backgroundJobs.strategy "checkpoint-compatible" — see docs/cache-verification.md.',
+          {
+            sessionID: message.sessionID,
+            requestNumber: state.completedRequests,
+            frozenCacheRead: message.cacheRead,
+            consecutiveFrozenRequests: state.plateauStreak,
+            uncachedInputTokensDuringPlateau: state.plateauInputTokens,
+          },
+        );
+      }
+    } else {
+      state.plateauStreak = 0;
+      state.plateauInputTokens = 0;
+      state.plateauWarned = false;
     }
 
     if (message.cacheRead > 0) state.warnedSinceLastHit = false;

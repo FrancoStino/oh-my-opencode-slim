@@ -168,6 +168,93 @@ describe('createCacheMonitorHook', () => {
     expect(warnings[0].message).toContain('prompt-cache bust');
   });
 
+  test('warns when cache-read plateaus while sizeable input accumulates', async () => {
+    const { hook, warnings } = createHarness();
+
+    // Issue #874 signature: read frozen at one boundary while uncached
+    // input keeps growing turn over turn.
+    await hook.event(
+      assistantMessageEvent({ messageID: 'p1', input: 7000, cacheRead: 42496 }),
+    );
+    for (const [index, id] of ['p2', 'p3', 'p4', 'p5'].entries()) {
+      await hook.event(
+        assistantMessageEvent({
+          messageID: id,
+          input: 15000 + index,
+          cacheRead: 42496,
+        }),
+      );
+    }
+
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toContain('cache-read plateau');
+    expect(warnings[0].data).toMatchObject({
+      sessionID: 'ses_monitor',
+      frozenCacheRead: 42496,
+      consecutiveFrozenRequests: 4,
+    });
+
+    // Once per plateau, even as the streak keeps growing.
+    await hook.event(
+      assistantMessageEvent({
+        messageID: 'p6',
+        input: 20000,
+        cacheRead: 42496,
+      }),
+    );
+    expect(warnings).toHaveLength(1);
+
+    // Growth ends the plateau and re-arms the warning for a new one.
+    await hook.event(
+      assistantMessageEvent({ messageID: 'p7', input: 900, cacheRead: 60416 }),
+    );
+    for (const id of ['p8', 'p9', 'p10', 'p11']) {
+      await hook.event(
+        assistantMessageEvent({
+          messageID: id,
+          input: 16000,
+          cacheRead: 60416,
+        }),
+      );
+    }
+    expect(warnings).toHaveLength(2);
+  });
+
+  test('stays silent on frozen reads with small accumulated input', async () => {
+    const { hook, warnings } = createHarness();
+
+    // Providers round reads to coarse boundaries; identical reads across
+    // small turns are normal and must not warn.
+    await hook.event(
+      assistantMessageEvent({ messageID: 'q1', input: 8000, cacheRead: 17920 }),
+    );
+    for (const id of ['q2', 'q3', 'q4', 'q5', 'q6']) {
+      await hook.event(
+        assistantMessageEvent({ messageID: id, input: 400, cacheRead: 17920 }),
+      );
+    }
+
+    expect(warnings).toHaveLength(0);
+  });
+
+  test('stays silent while cache-read keeps growing', async () => {
+    const { hook, warnings } = createHarness();
+
+    let read = 17920;
+    for (const [index, id] of ['r1', 'r2', 'r3', 'r4', 'r5'].entries()) {
+      await hook.event(
+        assistantMessageEvent({
+          messageID: `${id}-${index}`,
+          input: 20000,
+          cacheRead: read,
+        }),
+      );
+      read += 1024;
+    }
+
+    expect(warnings).toHaveLength(0);
+  });
+
   test('stays silent on the first request and on tiny prompts', async () => {
     const { hook, warnings } = createHarness();
 
