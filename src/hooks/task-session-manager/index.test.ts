@@ -35,14 +35,13 @@ async function flushChildIdleReconcile(): Promise<void> {
   await new Promise((resolve) => setTimeout(resolve, 5));
 }
 
-function createHook(options?: {
+type HookOptions = {
   shouldManageSession?: (sessionID: string) => boolean;
   registerSessionAsOrchestrator?: (sessionID: string) => void;
   readContextMinLines?: number;
   readContextMaxFiles?: number;
   strategy?: 'latest' | 'checkpoint-compatible';
   maxRetainedSnapshots?: number;
-  /** Matches production default true; set false to exercise opt-out. */
   continueOnIdle?: boolean;
   backgroundJobBoard?: BackgroundJobBoard;
   sessionStatus?: unknown;
@@ -50,7 +49,9 @@ function createHook(options?: {
   idleReconcileDelayMs?: number;
   isFallbackInProgress?: (sessionID: string) => boolean;
   coordinator?: SessionLifecycle;
-}) {
+};
+
+function createHook(options?: HookOptions) {
   const hook = createTaskSessionManagerHook(
     {
       client: {
@@ -69,7 +70,7 @@ function createHook(options?: {
       strategy: options?.strategy,
       readContextMinLines: options?.readContextMinLines,
       readContextMaxFiles: options?.readContextMaxFiles,
-      continueOnIdle: options?.continueOnIdle ?? true,
+      continueOnIdle: options?.continueOnIdle ?? false,
       backgroundJobBoard: options?.backgroundJobBoard,
       shouldManageSession: options?.shouldManageSession ?? (() => true),
       registerSessionAsOrchestrator: options?.registerSessionAsOrchestrator,
@@ -80,6 +81,13 @@ function createHook(options?: {
   );
 
   return { hook };
+}
+
+function createContinuationHook(options?: HookOptions) {
+  return createHook({
+    ...options,
+    continueOnIdle: options?.continueOnIdle ?? true,
+  });
 }
 
 function createMessages(sessionID: string, text = 'user message') {
@@ -3471,7 +3479,7 @@ describe('task-session-manager hook', () => {
     ).toHaveLength(1);
   });
 
-  test('defaults continueOnIdle on: continuation SDK calls run', async () => {
+  test('defaults continueOnIdle off: continuation SDK calls do not run', async () => {
     const promptAsync = mock(async () => ({}));
     const todo = mock(async () => ({ data: [{ status: 'in_progress' }] }));
     const hook = createTaskSessionManagerHook(
@@ -3500,8 +3508,8 @@ describe('task-session-manager hook', () => {
     });
     await flushContinuation();
 
-    expect(todo).toHaveBeenCalled();
-    expect(promptAsync).toHaveBeenCalledTimes(1);
+    expect(todo).not.toHaveBeenCalled();
+    expect(promptAsync).not.toHaveBeenCalled();
   });
 
   test('explicit continueOnIdle false reconciles parent terminal job without continuation', async () => {
@@ -3552,7 +3560,8 @@ describe('task-session-manager hook', () => {
 
   test('nudges once for incomplete todos when parent and children are inactive', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
+      continueOnIdle: true,
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'in_progress' }] })),
@@ -3579,7 +3588,7 @@ describe('task-session-manager hook', () => {
 
   test('paired idle events submit at most one continuation', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -3716,7 +3725,7 @@ describe('task-session-manager hook', () => {
           resolvePrompt = resolve;
         }),
     );
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -3740,7 +3749,7 @@ describe('task-session-manager hook', () => {
     expect(promptAsync).toHaveBeenCalledTimes(1);
 
     await hook.event({ event: { type: 'server.instance.disposed' } });
-    const { hook: nextHook } = createHook({
+    const { hook: nextHook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -3764,7 +3773,7 @@ describe('task-session-manager hook', () => {
     const promptAsync = mock(async () => {
       throw new Error('prompt rejected');
     });
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -3804,7 +3813,7 @@ describe('task-session-manager hook', () => {
         }),
     );
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo,
@@ -3912,7 +3921,7 @@ describe('task-session-manager hook', () => {
       promptAsync,
     };
     let fallbackInProgress = false;
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       isFallbackInProgress: () => fallbackInProgress,
       sessionClient,
@@ -3951,7 +3960,7 @@ describe('task-session-manager hook', () => {
       if (todoCalls === 1) return { data: undefined };
       return { data: [{ status: 'pending' }] };
     });
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo,
@@ -3985,7 +3994,7 @@ describe('task-session-manager hook', () => {
       }
       return { data: {} };
     });
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -4011,7 +4020,7 @@ describe('task-session-manager hook', () => {
   test('does not evaluate or nudge while a question or permission waits', async () => {
     const todo = mock(async () => ({ data: [{ status: 'pending' }] }));
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo,
@@ -4045,7 +4054,7 @@ describe('task-session-manager hook', () => {
   test('does not evaluate or nudge after wait_for_user requests text-only HITL', async () => {
     const todo = mock(async () => ({ data: [{ status: 'pending' }] }));
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo,
@@ -4067,7 +4076,7 @@ describe('task-session-manager hook', () => {
 
   test('a distinct external user message releases wait_for_user', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -4100,7 +4109,7 @@ describe('task-session-manager hook', () => {
   test('a duplicate external message cannot clear a newer user wait', async () => {
     const todo = mock(async () => ({ data: [{ status: 'pending' }] }));
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo,
@@ -4142,7 +4151,7 @@ describe('task-session-manager hook', () => {
   test('synthetic and internal messages do not clear wait_for_user', async () => {
     const todo = mock(async () => ({ data: [{ status: 'pending' }] }));
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo,
@@ -4179,7 +4188,7 @@ describe('task-session-manager hook', () => {
   test('a foreground-fallback replay marker does not clear wait_for_user', async () => {
     const todo = mock(async () => ({ data: [{ status: 'pending' }] }));
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo,
@@ -4218,7 +4227,7 @@ describe('task-session-manager hook', () => {
     const children = mock(async () => ({ data: [] }));
     const status = mock(async () => ({ data: {} }));
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: { todo, children, status, promptAsync },
     });
@@ -4244,7 +4253,7 @@ describe('task-session-manager hook', () => {
         }),
     );
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo,
@@ -4282,11 +4291,11 @@ describe('task-session-manager hook', () => {
       status: mock(async () => ({ data: {} })),
       promptAsync,
     };
-    const owner = createHook({
+    const owner = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient,
     }).hook;
-    const waiter = createHook({
+    const waiter = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient,
     }).hook;
@@ -4306,7 +4315,7 @@ describe('task-session-manager hook', () => {
 
   test('external user input clears only the explicit wait while a question remains', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -4363,7 +4372,7 @@ describe('task-session-manager hook', () => {
       promptAsync,
     };
     const makeHook = () =>
-      createHook({ idleReconcileDelayMs: 0, sessionClient }).hook;
+      createContinuationHook({ idleReconcileDelayMs: 0, sessionClient }).hook;
     const owner = makeHook();
 
     owner.beginUserWait('parent-1');
@@ -4391,7 +4400,7 @@ describe('task-session-manager hook', () => {
     const todo = mock(async () => ({ data: [{ status: 'pending' }] }));
     const promptAsync = mock(async () => ({}));
     let fallbackInProgress = true;
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       isFallbackInProgress: () => fallbackInProgress,
       sessionClient: {
@@ -4421,7 +4430,7 @@ describe('task-session-manager hook', () => {
     const children = mock(async () => ({ data: [] }));
     const status = mock(async () => ({ data: {} }));
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: { todo, children, status, promptAsync },
     });
@@ -4446,7 +4455,7 @@ describe('task-session-manager hook', () => {
   test('fails closed when an id-less ask races a scheduled continuation', async () => {
     const todo = mock(async () => ({ data: [{ status: 'pending' }] }));
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo,
@@ -4487,7 +4496,7 @@ describe('task-session-manager hook', () => {
 
   test('clears only the resolved input wait and resumes on a later idle', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -4562,7 +4571,7 @@ describe('task-session-manager hook', () => {
 
   test('resumes on a later idle after a question rejection', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -4605,7 +4614,7 @@ describe('task-session-manager hook', () => {
         }),
     );
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo,
@@ -4636,7 +4645,7 @@ describe('task-session-manager hook', () => {
   test('internal and synthetic messages do not clear an input wait', async () => {
     const todo = mock(async () => ({ data: [{ status: 'pending' }] }));
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo,
@@ -4678,7 +4687,7 @@ describe('task-session-manager hook', () => {
   test('retains input waits across a session error', async () => {
     const todo = mock(async () => ({ data: [{ status: 'pending' }] }));
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo,
@@ -4723,7 +4732,7 @@ describe('task-session-manager hook', () => {
       },
     ] as const) {
       const promptAsync = mock(async () => ({}));
-      const { hook } = createHook({
+      const { hook } = createContinuationHook({
         idleReconcileDelayMs: 0,
         sessionClient: {
           todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -4752,7 +4761,7 @@ describe('task-session-manager hook', () => {
   test('coalesces paired idle events and suppresses active children', async () => {
     const promptAsync = mock(async () => ({}));
     const children = mock(async () => ({ data: [{ id: 'child-1' }] }));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -4779,7 +4788,7 @@ describe('task-session-manager hook', () => {
 
   test('runtime-shaped external messages rearm a consumed nudge', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -4814,7 +4823,7 @@ describe('task-session-manager hook', () => {
 
   test('output.message.id rearms when input.messageID is missing', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -4850,7 +4859,7 @@ describe('task-session-manager hook', () => {
 
   test('ID-less output.message object identity rearms once', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -4942,7 +4951,7 @@ describe('task-session-manager hook', () => {
 
   test('distinct ID-less message objects each open a new epoch', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -4988,7 +4997,7 @@ describe('task-session-manager hook', () => {
 
   test('missing id and output.message fails closed without rearm', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -5149,7 +5158,7 @@ describe('task-session-manager hook', () => {
 
   test('file-only external messages rearm a consumed nudge', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -5184,7 +5193,7 @@ describe('task-session-manager hook', () => {
 
   test('synthetic completion messages do not rearm a consumed nudge', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -5225,7 +5234,7 @@ describe('task-session-manager hook', () => {
 
   test('nudge busy-to-idle cycle does not send a second unchanged nudge', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -5262,7 +5271,7 @@ describe('task-session-manager hook', () => {
         }),
     );
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo,
@@ -5294,7 +5303,7 @@ describe('task-session-manager hook', () => {
     const board = new BackgroundJobBoard();
     setupCompletedJob(board);
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       backgroundJobBoard: board,
       idleReconcileDelayMs: 0,
       sessionClient: {
@@ -5319,7 +5328,7 @@ describe('task-session-manager hook', () => {
 
   test('missing SDK response data fails closed without nudging', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: undefined })),
@@ -5339,7 +5348,7 @@ describe('task-session-manager hook', () => {
 
   test('does not nudge when todos are completed or cancelled only', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({
@@ -5361,7 +5370,7 @@ describe('task-session-manager hook', () => {
 
   test('does not nudge while the parent is active', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -5381,7 +5390,7 @@ describe('task-session-manager hook', () => {
 
   test('does not nudge while a child is retrying', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -5403,7 +5412,7 @@ describe('task-session-manager hook', () => {
 
   test('does not rearm a consumed nudge for its actual internal part', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -5440,7 +5449,7 @@ describe('task-session-manager hook', () => {
     const promptAsync = mock(async () => {
       throw new Error('prompt failed');
     });
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -5464,7 +5473,7 @@ describe('task-session-manager hook', () => {
 
   test('keeps a failed prompt response consumed', async () => {
     const promptAsync = mock(async () => ({ error: 'prompt failed' }));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => ({ data: [{ status: 'pending' }] })),
@@ -5488,12 +5497,12 @@ describe('task-session-manager hook', () => {
 
   test('fails closed for missing or throwing SDK endpoints', async () => {
     const missingPrompt = mock(async () => ({}));
-    const { hook: missingHook } = createHook({
+    const { hook: missingHook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: { promptAsync: missingPrompt },
     });
     const throwingPrompt = mock(async () => ({}));
-    const { hook: throwingHook } = createHook({
+    const { hook: throwingHook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => {
@@ -5518,7 +5527,7 @@ describe('task-session-manager hook', () => {
 
   test('does not nudge when fallback is already in progress', async () => {
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       isFallbackInProgress: () => true,
       sessionClient: {
@@ -5546,7 +5555,7 @@ describe('task-session-manager hook', () => {
       },
     );
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       isFallbackInProgress: () => fallbackInProgress,
       sessionClient: {
@@ -5576,7 +5585,7 @@ describe('task-session-manager hook', () => {
       releaseLatestChildren = () => resolve({ data: [] });
     });
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       backgroundJobBoard: board,
       idleReconcileDelayMs: 0,
       sessionClient: {
@@ -5609,7 +5618,7 @@ describe('task-session-manager hook', () => {
       },
     );
     const promptAsync = mock(async () => ({}));
-    const { hook } = createHook({
+    const { hook } = createContinuationHook({
       idleReconcileDelayMs: 0,
       sessionClient: {
         todo: mock(async () => todos),
