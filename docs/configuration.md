@@ -114,7 +114,7 @@ Presets can also be switched at runtime without restarting using the `/preset` c
 |-----------|--------|---|-----------------------------|
 | `presets.<name>.<agent>.model` | string | - | Model ID in `provider/model` format |
 | `presets.<name>.<agent>.temperature` | number | - | Temperature (0–2) |
-| `presets.<name>.<agent>.variant` | string | - | Reasoning effort: `"low"`, `"medium"`, `"high"` |
+| `presets.<name>.<agent>.variant` | string | - | Reasoning effort: `"low"`, `"medium"`, `"high"`, or `"max"` (provider-specific) |
 | `presets.<name>.<agent>.displayName` | string | - | Custom user-facing alias for the agent (e.g. `"advisor"` for `oracle`) |
 | `presets.<name>.<agent>.skills` | string[] | - | Skills the agent can use (`"*"`, `"!item"`, explicit list) |
 | `presets.<name>.<agent>.mcps` | string[] | - | MCPs the agent can use (`"*"`, `"!item"`, explicit list) |
@@ -230,8 +230,10 @@ subprocess.
   `presets.<name>.council.model`.
 - The **councillor models** are configured separately under
   `council.presets.<name>.<councillor>.model`.
-- `council.master*` fields have been removed. A deprecation warning is
-  logged this release if a config still contains them.
+- `council.master` (exact key) has been removed; a deprecation warning is
+  logged if a config still contains it. Other `council.master_*` variants
+  (e.g., `council.master_timeout`, `council.master_fallback`) are silently
+  dropped without warning — remove them manually.
 
 ### Manual Update Mode
 
@@ -262,7 +264,10 @@ Background job management is enabled by default and does not need to be present
 in the starter config. Add `backgroundJobs` only if you want to tune how many
 completed/reconciled child-agent sessions are reusable, how much read context is
 shown, how board snapshots are injected, or to opt into beta automatic
-incomplete-todo continuation prompts on idle:
+incomplete-todo continuation prompts on idle. For glossary definitions of
+background-job terms (board snapshot, checkpoint cache epoch, injection
+strategy, etc.), see [CONTEXT.md — Background
+Jobs](../CONTEXT.md#background-jobs).
 
 ```jsonc
 {
