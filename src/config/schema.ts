@@ -423,6 +423,28 @@ export const PluginConfigSchema = z
     council: CouncilConfigSchema.optional(),
     companion: CompanionConfigSchema.optional(),
     acpAgents: AcpAgentsConfigSchema.optional(),
+    debug: z
+      .object({
+        forceFallbackError: z
+          .enum(['not-available', 'bad-request'])
+          .optional()
+          .describe(
+            'Inject a synthetic fallback error on the first successful ' +
+              'assistant response in each session to test model switching. ' +
+              'Remove after testing.',
+          ),
+        forceFallbackModels: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'When set with forceFallbackError, only inject errors on ' +
+              'responses from these specific models (providerID/modelID). ' +
+              'Allows cascade testing through multiple fallback levels.',
+          ),
+      })
+      .strict()
+      .optional()
+      .describe('Debug-only options for live testing. Do not ship.'),
   })
   .superRefine((value, ctx) => {
     if (value.agents) {

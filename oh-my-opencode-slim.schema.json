@@ -1255,6 +1255,28 @@
         ],
         "additionalProperties": false
       }
+    },
+    "debug": {
+      "description": "Debug-only options for live testing. Do not ship.",
+      "type": "object",
+      "properties": {
+        "forceFallbackError": {
+          "description": "Inject a synthetic fallback error on the first successful assistant response in each session to test model switching. Remove after testing.",
+          "type": "string",
+          "enum": [
+            "not-available",
+            "bad-request"
+          ]
+        },
+        "forceFallbackModels": {
+          "description": "When set with forceFallbackError, only inject errors on responses from these specific models (providerID/modelID). Allows cascade testing through multiple fallback levels.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
     }
   },
   "title": "oh-my-opencode-slim",

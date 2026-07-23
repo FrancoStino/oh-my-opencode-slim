@@ -46,6 +46,7 @@ import {
   ForegroundFallbackManager,
   SessionLifecycle,
 } from './hooks';
+import { createDebugFallbackInjector } from './hooks/foreground-fallback/debug-injector';
 import { processImageAttachments } from './hooks/image-hook';
 import { isMessageWithParts, type MessageWithParts } from './hooks/types';
 import { handleTaskSessionEvent } from './index-event';
@@ -182,6 +183,7 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
   let chatHeadersHook: ReturnType<typeof createChatHeadersHook>;
   let foregroundFallback: ForegroundFallbackManager;
+  let debugFallbackInjector: ReturnType<typeof createDebugFallbackInjector>;
   let deepworkCommandHook: ReturnType<typeof createDeepworkCommandHook>;
   let reflectCommandHook: ReturnType<typeof createReflectCommandHook>;
   let loopCommandHook: ReturnType<typeof createLoopCommandHook>;
@@ -336,6 +338,12 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
       config.fallback?.enabled !== false,
       config.fallback?.maxRetries ?? 3,
       sessionLifecycle,
+    );
+
+    debugFallbackInjector = createDebugFallbackInjector(
+      foregroundFallback,
+      config.debug?.forceFallbackError,
+      config.debug?.forceFallbackModels,
     );
 
     deepworkCommandHook = createDeepworkCommandHook();
@@ -1011,6 +1019,9 @@ const OhMyOpenCodeLite: Plugin = async (ctx) => {
 
       // Runtime model fallback for foreground agents (rate-limit detection)
       await foregroundFallback.handleEvent(input.event);
+
+      // Debug: inject synthetic fallback error after successful responses
+      await debugFallbackInjector(input.event);
 
       // Handle auto-update checking
       await autoUpdateChecker.event(input);

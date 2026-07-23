@@ -55,6 +55,11 @@ const RETRYABLE_ERROR_PATTERNS = [
   /\b403\b/,
   /forbidden/i,
   /blocked by gateway/i,
+  // Model unavailable / removed from a provider's catalog — not a rate
+  // limit, but the model is unusable and the chain should fall back to the
+  // next entry.
+  /\bnot available\b/i,
+  /\bbad request\b/i,
 ];
 
 const OUTAGE_STATUS_CODES = new Set([500, 502, 503, 504]);
