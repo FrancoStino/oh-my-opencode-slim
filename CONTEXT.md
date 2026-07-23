@@ -6,7 +6,9 @@ A glossary of the terms used in this project's domain. Definitions describe what
 
 Core agent roles and classifications:
 
-The agent system defines the fundamental building blocks for AI-powered work delegation. Each agent type serves a specific purpose in the orchestration ecosystem.
+The agent system defines the fundamental building blocks for AI-powered work delegation. Each agent type serves a specific purpose in the orchestration ecosystem. Agents are the unit of work — the orchestrator delegates bounded tasks to specialists rather than doing everything itself, which keeps prompts short and costs predictable.
+
+**When to use which agent:** Explorer for codebase search, Librarian for external docs, Oracle for architecture/review, Designer for UI/UX, Fixer for implementation, Observer for visual analysis.
 
 **Core agent types:**
 
@@ -21,7 +23,7 @@ The agent system defines the fundamental building blocks for AI-powered work del
 - **Oracle** — Subagent for architecture, debugging strategy, and code review.
 - **Designer** — Subagent for UI/UX design and visual polish.
 - **Fixer** — Subagent for bounded implementation and execution.
-- **Observer** — Subagent for visual/media analysis (images, PDFs, diagrams). Disabled by default.
+- **Observer** — Subagent for visual/media analysis (images, PDFs, diagrams). Disabled by default because it requires a vision-capable model and adds cost; enable it with `"disabled_agents": []` when working with screenshots or diagrams.
 
 **Multi-LLM systems:**
 
@@ -44,7 +46,9 @@ The agent system defines the fundamental building blocks for AI-powered work del
 
 Council-specific concepts:
 
-The council system enables multi-LLM consensus and collaborative decision-making.
+The council system enables multi-LLM consensus and collaborative decision-making. Use council when a single model's judgment is insufficient — architectural decisions, code review, or any question where multiple perspectives reduce risk. Each councillor runs as an independent subagent; the orchestrator synthesizes their responses into a consensus rating.
+
+**When to use:** High-stakes decisions, conflicting requirements, or when you need a second opinion on architecture/code. **When not to use:** Simple tasks that a single specialist can handle — council adds latency and cost.
 
 - **Consensus** — The synthesized conclusion of a council run, rated `unanimous`, `majority`, or `split`.
 - **Council preset** — A named lineup of councillor configurations used for a council run. Plugin config uses `preset` for the selected agent-override set; council config uses `default_preset` for the selected councillor lineup — the `default_` prefix disambiguates the active selection from the preset list within the council sub-object.
@@ -54,7 +58,9 @@ The council system enables multi-LLM consensus and collaborative decision-making
 
 Terminal and session management:
 
-The multiplexer system manages terminal backends and agent session lifecycle.
+The multiplexer system manages terminal backends and agent session lifecycle. When enabled, each child agent gets its own terminal pane so you can see and interact with running work in real time. Disabled by default (`multiplexer.type: "none"`) — enable it when you want visibility into parallel work.
+
+**When to use:** Multi-agent work where you want to watch specialists run side-by-side. **When to leave off:** Single-threaded workflows or headless environments. See [Configuration Reference — Multiplexer](docs/configuration.md#multiplexer) for setup.
 
 - **Multiplexer** — A terminal backend (tmux, zellij, herdr, cmux, or kitty) that hosts child agent panes. Set via `multiplexer.type`, which also accepts `auto` (auto-detect) and `none` (disabled).
 - **Multiplexer type** — The selected backend: `auto`, `tmux`, `zellij`, `herdr`, `cmux`, `kitty`, or `none`.
@@ -67,7 +73,9 @@ The multiplexer system manages terminal backends and agent session lifecycle.
 
 Asynchronous job lifecycle management:
 
-The background job system tracks and manages delegated specialist tasks.
+The background job system tracks and manages delegated specialist tasks. Every subagent launch creates a job; the orchestrator references the job board when planning follow-up work. For full configuration options, see [Configuration Reference — Background Jobs](docs/configuration.md#background-jobs) and [Background Orchestration](docs/background-orchestration.md).
+
+**Why this exists:** Without the board, the orchestrator would lose track of parallel work and re-delegate already-running tasks. The board is the single source of truth for "what's running."
 
 - **Background job** — A delegated specialist task that runs asynchronously; tracked until its result is reconciled into the orchestrator's response.
 - **Background Job Board** — The store of background job state and metadata.
@@ -85,7 +93,9 @@ The background job system tracks and manages delegated specialist tasks.
 
 Plugin capabilities and workflows:
 
-The skills system provides bundled, self-contained workflows and capabilities for the plugin.
+The skills system provides bundled, self-contained workflows and capabilities for the plugin. Skills are invoked by the orchestrator when it detects a matching task pattern — they encode best practices for specific work types so the model doesn't reinvent the approach each time.
+
+**When to use:** Invoke a skill when starting work that matches its pattern (e.g., `/codemap` for new repo exploration, `/verification-planning` before non-trivial implementation).
 
 - **Skill** — A bundled, self-contained workflow or capability shipped with the plugin. Bundled skills: codemap, clonedeps, simplify, deepwork, reflect, worktrees, oh-my-opencode-slim, verification-planning. Note: `loop-engineering` exists on disk but is not registered as a bundled skill.
 - **Verification-planning** — An orchestrator-only skill for designing project-specific evidence paths before non-trivial implementation.
@@ -110,7 +120,9 @@ The companion provides a visual status overlay showing running and active agents
 
 Prompt cache infrastructure and safety:
 
-The cache safety system ensures prompt cache hits and LLM cost optimization.
+The cache safety system ensures prompt cache hits and LLM cost optimization. Provider prompt caches are exact byte-prefix matches — any earlier change invalidates the entire suffix. Cache safety enforces stable byte prefixes so repeated orchestrator turns reuse the same cached prompt. See `AGENTS.md` "Prompt Cache Safety" for rules.
+
+**Why this matters:** Without cache hits, every orchestrator turn re-pays the full prefix cost. A 50K-token prefix at $3/M tokens, hit once per turn vs always full, saves ~$0.15/turn at scale.
 
 - **Cache safety** / **prompt cache safety** — Major concept with extensive infrastructure: `cache-safe-injection.ts` for deterministic content injection, `cache-monitor/` for runtime watchdog, `cache-safety.property.test.ts` for prefix-stability properties, `cache-payload.snapshot.test.ts` for golden snapshots, `cache-safety-tripwire.test.ts` for volatile-input pattern bans, and AGENTS.md "Prompt Cache Safety" section. Critical for provider prompt cache hits and LLM cost optimization.
 
@@ -118,7 +130,9 @@ The cache safety system ensures prompt cache hits and LLM cost optimization.
 
 Agent Communication Protocol integration:
 
-The ACP system enables external Agent Client Protocol servers as optional OpenCode subagents.
+The ACP system enables external Agent Client Protocol servers as optional OpenCode subagents. Each ACP agent is wrapped in a lightweight local subagent that calls `acp_run`; the external process runs the actual work. See [ACP Agents](docs/acp-agents.md) for setup.
+
+**When to use:** Connecting to external agent CLIs (Claude Code, Gemini, etc.) that speak ACP. **When not to use:** If the work can be done by a built-in specialist — ACP adds subprocess overhead.
 
 - **ACP agent** — An external agent defined via the Agent Communication Protocol, run through `acp_run`.
 - **ACP wrapper agent** — Lightweight local subagent that calls `acp_run` on behalf of the external ACP process. Distinct from the ACP agent itself — the wrapper handles protocol execution while the external agent provides the actual functionality.
@@ -135,7 +149,9 @@ The cmux multiplexer provides advanced session handling with configurable timeou
 
 Auto-iterative execution and verification:
 
-The loop system enables auto-iterative work execution with verification.
+The loop system enables auto-iterative work execution with verification. A loop runs an execute agent, verifies output against success criteria, and repeats until done or escalated. Use it for tasks that have a clear pass/fail check (tests, builds, lint).
+
+**When to use:** Well-defined tasks with objective success criteria (fix a failing test, implement a function with tests). **When not to use:** Open-ended work where "done" is subjective — loops will thrash without a clear signal.
 
 - **Loop** — An auto-iterative run that executes work with an agent, verifies it against success criteria, and repeats until done or escalated.
 - **Loop session** — The state of one loop run (goal, current phase, attempts, history).
@@ -148,7 +164,9 @@ The loop system enables auto-iterative work execution with verification.
 
 Specification document generation:
 
-The interview system builds persistent specification documents from ideas through question/answer flows.
+The interview system builds persistent specification documents from ideas through question/answer flows. The orchestrator asks structured questions, you answer, and the result is a persistent spec file. See [Interview](docs/interview.md) for the full workflow.
+
+**When to use:** Starting a new project, designing a feature, or capturing requirements before implementation. **When not to use:** Trivial changes or well-defined tasks that don't need upfront design.
 
 - **Interview** — A question/answer flow that builds a persistent specification document from an idea.
 - **Spec block** — A named section within a generated specification document.
@@ -158,7 +176,9 @@ The interview system builds persistent specification documents from ideas throug
 
 Configuration concepts and terminology:
 
-The configuration system provides user-facing configuration for the plugin. For the complete configuration reference with all options, defaults, and examples, see [Configuration Reference](docs/configuration.md).
+The configuration system provides user-facing configuration for the plugin. For the complete configuration reference with all options, defaults, and examples, see [Configuration Reference](docs/configuration.md). Most users only need `preset`, `presets.<name>.<agent>.model`, and maybe `disabled_agents` — the rest is for advanced tuning.
+
+**Layering order:** `~/.config/opencode/oh-my-opencode-slim.jsonc` is the user base; `.opencode/oh-my-opencode-slim.json` (project-local) overrides user config; CLI flags and runtime `/model` commands override config entirely. See [Project-local Customization](docs/project-local-customization.md) for precedence details.
 
 - **Plugin config** — The user-facing configuration loaded from `oh-my-opencode-slim.jsonc`.
 - **Preset** — A named set of per-agent overrides. The same word also names council councillor lineups (see Flagged).
