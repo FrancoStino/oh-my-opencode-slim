@@ -144,6 +144,59 @@ describe('isFailoverError', () => {
     ).toBe(true);
   });
 
+  test('returns true for content-policy moderation rejections (cyber_policy)', () => {
+    // OpenAI moderation surfaces as HTTP 400 invalid_request with the
+    // provider-specific policy code; deterministic per provider, so the next
+    // model in the chain must be tried instead of failing the request.
+    expect(
+      isFailoverError(
+        'AI_APICallError: This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request. To get authorized for security work, join the Trusted Access for Cyber program: https://chatgpt.com/cyber',
+      ),
+    ).toBe(true);
+    expect(
+      isFailoverError({
+        data: {
+          statusCode: 400,
+          message:
+            'This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request. To get authorized for security work, join the Trusted Access for Cyber program: https://chatgpt.com/cyber',
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isFailoverError({
+        data: {
+          statusCode: 400,
+          responseBody:
+            '{"error":{"type":"invalid_request","code":"cyber_policy"}}',
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isFailoverError({
+        data: {
+          statusCode: 400,
+          responseBody:
+            '{"error":{"code":"content_policy_violation","message":"Your request was rejected as a result of our safety system."}}',
+        },
+      }),
+    ).toBe(true);
+  });
+
+  test('returns false for generic flagged/policy wording without the moderation signature', () => {
+    // Only the structured code or the exact provider wording match; ordinary
+    // errors mentioning "flagged", "cybersecurity", or "policy" stay hard
+    // errors.
+    expect(
+      isFailoverError({ message: 'request flagged for review by the proxy' }),
+    ).toBe(false);
+    expect(
+      isFailoverError({ message: 'analysis of cybersecurity topics rejected' }),
+    ).toBe(false);
+    expect(
+      isFailoverError({ message: 'policy update required for this model' }),
+    ).toBe(false);
+  });
+
   test('returns true for "usage exceeded"', () => {
     expect(isRetryableError({ message: 'usage exceeded' })).toBe(true);
   });
