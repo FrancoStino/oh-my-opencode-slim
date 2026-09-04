@@ -144,6 +144,59 @@ describe('isFailoverError', () => {
     ).toBe(true);
   });
 
+  test('returns true for content-policy moderation rejections (cyber_policy)', () => {
+    // OpenAI moderation surfaces as HTTP 400 invalid_request with the
+    // provider-specific policy code; deterministic per provider, so the next
+    // model in the chain must be tried instead of failing the request.
+    expect(
+      isFailoverError(
+        'AI_APICallError: This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request. To get authorized for security work, join the Trusted Access for Cyber program: https://chatgpt.com/cyber',
+      ),
+    ).toBe(true);
+    expect(
+      isFailoverError({
+        data: {
+          statusCode: 400,
+          message:
+            'This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request. To get authorized for security work, join the Trusted Access for Cyber program: https://chatgpt.com/cyber',
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isFailoverError({
+        data: {
+          statusCode: 400,
+          responseBody:
+            '{"error":{"type":"invalid_request","code":"cyber_policy"}}',
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isFailoverError({
+        data: {
+          statusCode: 400,
+          responseBody:
+            '{"error":{"code":"content_policy_violation","message":"Your request was rejected as a result of our safety system."}}',
+        },
+      }),
+    ).toBe(true);
+  });
+
+  test('returns false for generic flagged/policy wording without the moderation signature', () => {
+    // Only the structured code or the exact provider wording match; ordinary
+    // errors mentioning "flagged", "cybersecurity", or "policy" stay hard
+    // errors.
+    expect(
+      isFailoverError({ message: 'request flagged for review by the proxy' }),
+    ).toBe(false);
+    expect(
+      isFailoverError({ message: 'analysis of cybersecurity topics rejected' }),
+    ).toBe(false);
+    expect(
+      isFailoverError({ message: 'policy update required for this model' }),
+    ).toBe(false);
+  });
+
   test('returns true for "usage exceeded"', () => {
     expect(isRetryableError({ message: 'usage exceeded' })).toBe(true);
   });
@@ -411,6 +464,47 @@ describe('ForegroundFallbackManager session.error', () => {
     ];
     expect(call[0].path.id).toBe('sess-1');
     // Should have picked the next model after anthropic/claude-opus-4-5
+    expect(call[0].body.model.providerID).toBe('openai');
+    expect(call[0].body.model.modelID).toBe('gpt-4o');
+  });
+
+  test('triggers fallback on content-policy moderation session.error', async () => {
+    // End-to-end regression: a cyber_policy rejection (HTTP 400
+    // invalid_request in production) must advance the fallback chain to the
+    // next model instead of failing the session outright.
+    await mgr.handleEvent({
+      type: 'message.updated',
+      properties: {
+        info: {
+          sessionID: 'sess-1',
+          providerID: 'anthropic',
+          modelID: 'claude-opus-4-5',
+          role: 'assistant',
+        },
+      },
+    });
+
+    await mgr.handleEvent({
+      type: 'session.error',
+      properties: {
+        sessionID: 'sess-1',
+        error: {
+          message:
+            'This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request. To get authorized for security work, join the Trusted Access for Cyber program: https://chatgpt.com/cyber',
+        },
+      },
+    });
+
+    expect(mocks.abort).toHaveBeenCalledTimes(0);
+    expect(mocks.promptAsync).toHaveBeenCalledTimes(1);
+
+    const call = mocks.promptAsync.mock.calls[0] as [
+      {
+        sessionID: string;
+        model: { providerID: string; modelID: string };
+      },
+    ];
+    expect(call[0].path.id).toBe('sess-1');
     expect(call[0].body.model.providerID).toBe('openai');
     expect(call[0].body.model.modelID).toBe('gpt-4o');
   });

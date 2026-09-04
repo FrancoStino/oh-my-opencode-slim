@@ -68,6 +68,18 @@ const RETRYABLE_ERROR_PATTERNS = [
   // "provider returned error" wording, which wraps any provider 4xx (e.g. a
   // genuine 400 the next model would reproduce) and must stay a hard error.
   /\b401\b/,
+  // Content-policy moderation rejections (e.g. OpenAI "cyber_policy",
+  // "content_policy_violation") arrive as HTTP 400 invalid_request with a
+  // provider-specific policy code in the body. They are deterministic per
+  // provider — retrying the same model will fail again, but a different
+  // provider in the chain does not share the policy, so the next model
+  // should be tried. Match the structured codes and the exact provider
+  // wording; do NOT match generic "flagged"/"policy" words that could
+  // appear in ordinary error text.
+  /\bcyber_policy\b/,
+  /\bcontent_policy_violation\b/,
+  /flagged for possible cybersecurity risk/i,
+  /rejected as a result of our safety system/i,
 ];
 
 const OUTAGE_STATUS_CODES = new Set([500, 502, 503, 504]);
