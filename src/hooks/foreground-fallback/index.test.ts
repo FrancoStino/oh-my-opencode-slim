@@ -468,6 +468,47 @@ describe('ForegroundFallbackManager session.error', () => {
     expect(call[0].body.model.modelID).toBe('gpt-4o');
   });
 
+  test('triggers fallback on content-policy moderation session.error', async () => {
+    // End-to-end regression: a cyber_policy rejection (HTTP 400
+    // invalid_request in production) must advance the fallback chain to the
+    // next model instead of failing the session outright.
+    await mgr.handleEvent({
+      type: 'message.updated',
+      properties: {
+        info: {
+          sessionID: 'sess-1',
+          providerID: 'anthropic',
+          modelID: 'claude-opus-4-5',
+          role: 'assistant',
+        },
+      },
+    });
+
+    await mgr.handleEvent({
+      type: 'session.error',
+      properties: {
+        sessionID: 'sess-1',
+        error: {
+          message:
+            'This content was flagged for possible cybersecurity risk. If this seems wrong, try rephrasing your request. To get authorized for security work, join the Trusted Access for Cyber program: https://chatgpt.com/cyber',
+        },
+      },
+    });
+
+    expect(mocks.abort).toHaveBeenCalledTimes(0);
+    expect(mocks.promptAsync).toHaveBeenCalledTimes(1);
+
+    const call = mocks.promptAsync.mock.calls[0] as [
+      {
+        sessionID: string;
+        model: { providerID: string; modelID: string };
+      },
+    ];
+    expect(call[0].path.id).toBe('sess-1');
+    expect(call[0].body.model.providerID).toBe('openai');
+    expect(call[0].body.model.modelID).toBe('gpt-4o');
+  });
+
   test('triggers fallback on unavailable provider channel session.error', async () => {
     await mgr.handleEvent({
       type: 'message.updated',
